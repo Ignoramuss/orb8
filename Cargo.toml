@@ -1,0 +1,79 @@
+[package]
+name = "orb8"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["Mayank Dighe <mayank@example.com>"]
+license = "Apache-2.0"
+description = "eBPF-powered observability toolkit for Kubernetes with GPU telemetry"
+repository = "https://github.com/Ignoramuss/orb8"
+homepage = "https://github.com/Ignoramuss/orb8"
+documentation = "https://github.com/Ignoramuss/orb8/blob/main/README.md"
+readme = "README.md"
+keywords = ["kubernetes", "ebpf", "observability", "gpu", "monitoring"]
+categories = ["command-line-utilities", "development-tools::profiling", "network-programming"]
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# eBPF
+aya = { version = "0.12", features = ["async_tokio"] }
+aya-log = "0.2"
+
+# Kubernetes client
+kube = { version = "0.88", features = ["runtime", "derive"] }
+k8s-openapi = { version = "0.21", features = ["latest"] }
+
+# CLI and TUI
+clap = { version = "4.4", features = ["derive", "cargo"] }
+ratatui = "0.25"
+crossterm = "0.27"
+
+# Metrics and observability
+prometheus = { version = "0.13", features = ["process"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+futures = "0.3"
+bytes = "1.5"
+
+[dev-dependencies]
+criterion = "0.5"
+tempfile = "3.8"
+
+[[bin]]
+name = "orb8"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[workspace]
+members = [
+    ".",
+]
+
+# Metadata for docs.rs
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

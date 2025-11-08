@@ -1,0 +1,82 @@
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# eBPF
+*.o
+*.ll
+*.bc
+.output/
+*.bpf.c
+*.skel.h
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+dist/
+build/
+*.so
+*.dylib
+*.dll
+
+# Logs
+*.log
+
+# Testing
+coverage/
+*.profraw
+*.profdata
+
+# Environment
+.env
+.env.local
+*.env
+
+# Documentation builds
+site/
+docs/_build/
+
+# Kubernetes
+kubeconfig
+*.kubeconfig
+
+# Binaries
+orb8
+orb8.exe
+
+# Benchmarks
+criterion/
+benchmarks/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# CI/CD
+.cache/
