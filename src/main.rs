@@ -94,12 +94,9 @@ fn main() {
         Level::INFO
     };
 
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(log_level)
-        .finish();
+    let subscriber = FmtSubscriber::builder().with_max_level(log_level).finish();
 
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("Failed to set tracing subscriber");
+    tracing::subscriber::set_global_default(subscriber).expect("Failed to set tracing subscriber");
 
     info!("Starting orb8 v{}", env!("CARGO_PKG_VERSION"));
 
@@ -121,7 +118,11 @@ fn main() {
 
 fn handle_trace(trace_type: TraceType) -> Result<(), Box<dyn std::error::Error>> {
     match trace_type {
-        TraceType::Network { namespace, pod, all_namespaces } => {
+        TraceType::Network {
+            namespace,
+            pod,
+            all_namespaces,
+        } => {
             info!("Network tracing requested");
             if all_namespaces {
                 info!("Monitoring all namespaces");
@@ -133,7 +134,10 @@ fn handle_trace(trace_type: TraceType) -> Result<(), Box<dyn std::error::Error>>
             }
             println!("🚧 Network tracing coming in v0.4.0 - See ROADMAP.md");
         }
-        TraceType::Dns { namespace, all_namespaces } => {
+        TraceType::Dns {
+            namespace,
+            all_namespaces,
+        } => {
             info!("DNS tracing requested");
             if all_namespaces {
                 info!("Monitoring all namespaces");
