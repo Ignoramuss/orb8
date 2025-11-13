@@ -1,0 +1,14 @@
+[package]
+name = "orb8-probes"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "eBPF probes for orb8 (kernel space)"
+
+[dependencies]
+# eBPF dependencies will be added in Phase 1
+# aya-bpf = "0.1"
+# aya-log-ebpf = "0.1"
+
+[lib]
+path = "src/lib.rs"

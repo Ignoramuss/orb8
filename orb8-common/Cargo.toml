@@ -1,0 +1,15 @@
+[package]
+name = "orb8-common"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Shared types between eBPF and userspace"
+
+[features]
+default = ["userspace"]
+userspace = []
+
+[dependencies]
+
+[lib]
+path = "src/lib.rs"
