@@ -1,0 +1,119 @@
+# Lima VM configuration for orb8 development
+# This creates a full Linux environment with eBPF and Kubernetes support
+
+vmType: "qemu"
+os: "Linux"
+arch: "default"
+
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+  - location: "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+
+cpus: 4
+memory: "6GiB"
+disk: "20GiB"
+
+mounts:
+  - location: "~"
+    writable: true
+
+# Enable SSH
+ssh:
+  loadDotSSHPubKeys: true
+
+# Provision script: Install development tools
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+
+      # Update system
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+
+      # Install build essentials
+      apt-get install -y \
+        build-essential \
+        curl \
+        git \
+        pkg-config \
+        libssl-dev \
+        vim \
+        less \
+        jq
+
+      # Install eBPF tools
+      apt-get install -y \
+        llvm-14 \
+        clang-14 \
+        libbpf-dev \
+        linux-headers-generic \
+        linux-tools-generic
+
+      # Install kubectl
+      curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | \
+        gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /' | \
+        tee /etc/apt/sources.list.d/kubernetes.list
+      apt-get update
+      apt-get install -y kubectl
+
+      # Install Docker (for minikube)
+      curl -fsSL https://get.docker.com | sh
+      usermod -aG docker {{.User}}
+
+      # Install minikube
+      curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+      install minikube-linux-amd64 /usr/local/bin/minikube
+      rm minikube-linux-amd64
+
+  - mode: user
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+
+      # Install Rust
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- \
+        -y \
+        --default-toolchain stable \
+        --profile default \
+        -c rustfmt -c clippy -c rust-analyzer
+
+      # Source Rust environment
+      source "$HOME/.cargo/env"
+
+      # Verify installations
+      rustc --version
+      cargo --version
+      kubectl version --client
+      minikube version
+
+message: |
+  ========================================
+  orb8 Development Environment Ready!
+  ========================================
+
+  The Linux VM is running with:
+  - Ubuntu 22.04
+  - Rust (latest stable)
+  - eBPF tools (LLVM, clang, libbpf)
+  - kubectl
+  - minikube
+  - Docker
+
+  Your orb8 project is mounted at: {{.Dir}}
+
+  To enter the VM:
+    limactl shell orb8-dev
+
+  Or use the shortcut:
+    make shell
+
+  Inside the VM, you can:
+    cd {{.Dir}}
+    cargo build
+    cargo test
+    cargo run -- --help

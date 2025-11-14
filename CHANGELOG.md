@@ -7,15 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned
-- eBPF probe infrastructure
-- Kubernetes API integration
-- Network flow tracing
-- GPU telemetry support
-
-## [0.1.0] - 2025-01-08
-
-### Added
+### In Progress (v0.1.0 - Project Bootstrap)
 - Initial project structure and configuration
 - Comprehensive README with project overview and features
 - Development roadmap outlining v0.1.0 through v1.3.0+
@@ -23,18 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Apache 2.0 license
 - Code of Conduct for community standards
 - GitHub issue and PR templates
-- CI/CD workflow placeholder
+- CI/CD workflow (planned)
 - Basic Rust project setup with Cargo.toml
 - Architecture documentation
-- Project gitignore configuration
+- Lima/QEMU development environment setup
 
-### Project Goals
-This initial release establishes the foundation for orb8, an eBPF-powered observability toolkit for Kubernetes with GPU telemetry. The focus is on project infrastructure and documentation to enable community collaboration.
-
-### Technical Highlights
-- Rust-based project structure
-- eBPF and Kubernetes-focused toolchain
-- Professional open-source project setup
+### Planned
+- eBPF probe infrastructure (v0.2.0)
+- Kubernetes API integration (v0.3.0)
+- Network flow tracing (v0.4.0)
+- GPU telemetry support (v0.8.0)
 
 ---
 
@@ -48,5 +38,4 @@ Each release will include:
 - **Fixed**: Bug fixes
 - **Security**: Security vulnerability fixes
 
-[Unreleased]: https://github.com/Ignoramuss/orb8/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/Ignoramuss/orb8/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Ignoramuss/orb8/compare/main...HEAD

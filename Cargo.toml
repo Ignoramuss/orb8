@@ -1,9 +1,9 @@
 [package]
 name = "orb8"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2021"
 rust-version = "1.75"
-authors = ["Mayank Dighe <mayank@example.com>"]
+authors = ["Ignoramuss"]
 license = "Apache-2.0"
 description = "eBPF-powered observability toolkit for Kubernetes with GPU telemetry"
 repository = "https://github.com/Ignoramuss/orb8"
@@ -16,10 +16,6 @@ categories = ["command-line-utilities", "development-tools::profiling", "network
 [dependencies]
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
-
-# eBPF
-aya = { version = "0.12", features = ["async_tokio"] }
-aya-log = "0.2"
 
 # Kubernetes client
 kube = { version = "0.88", features = ["runtime", "derive"] }
@@ -49,6 +45,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Utilities
 futures = "0.3"
 bytes = "1.5"
+async-trait = "0.1"
 
 [dev-dependencies]
 criterion = "0.5"
@@ -71,9 +68,20 @@ debug = true
 [workspace]
 members = [
     ".",
+    "orb8-probes",
+    "orb8-common",
+    "orb8-agent",
+    "orb8-server",
+    "orb8-cli",
+    "orb8-proto",
 ]
 
 # Metadata for docs.rs
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+# Linux-only dependencies (eBPF)
+[target.'cfg(target_os = "linux")'.dependencies]
+aya = { version = "0.12", features = ["async_tokio"] }
+aya-log = "0.2"
