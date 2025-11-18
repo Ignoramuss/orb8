@@ -48,11 +48,22 @@ Existing Kubernetes observability tools either focus on high-level metrics or se
 
 ### Prerequisites
 
+**For Building:**
+- Rust 1.75+ (stable)
+- Rust nightly toolchain with `rust-src` component
+- `bpf-linker` (install via `cargo install bpf-linker`)
+
+**For Running eBPF Programs:**
 - Linux kernel 5.8+ with BTF support
-- Kubernetes cluster 1.25+
-- Rust 1.75+ (for building from source)
-- 20GB free disk space (for development VM on macOS)
-- CUDA 11.0+ (for future GPU telemetry features, v0.8.0+)
+- Kubernetes cluster 1.25+ (for production deployment)
+
+**Platform-Specific:**
+- **macOS**: Lima + QEMU (for VM-based eBPF testing), 20GB free disk space
+- **Linux**: Native support, no VM needed
+- **Windows**: Use WSL2, follow Linux instructions
+
+**Future Features:**
+- CUDA 11.0+ (for GPU telemetry, v0.8.0+)
 
 ### From Source
 
@@ -95,6 +106,56 @@ orb8 trace syscall --pod suspicious-pod-456
 # Monitor GPU utilization for AI workloads
 orb8 trace gpu --namespace ml-training
 ```
+
+## Testing
+
+### Testing Phase 1.1 (Current)
+
+Phase 1.1 establishes the eBPF build infrastructure. You can test this on **both macOS and Linux** without needing a VM.
+
+**What works:**
+- eBPF programs compile to bytecode (`.bpf.o` files)
+- Build infrastructure validation
+- Unit tests
+
+**Expected output:**
+```
+warning: target filter `bins` specified, but no targets matched
+```
+This is normal - we don't have actual probe binaries yet (coming in Phase 1.2).
+
+### Linux Testing (Recommended: `make magic-local`)
+
+```bash
+# Verify your environment
+make verify-setup
+
+# Build, test, install (native, no VM)
+make magic-local
+```
+
+**Why `magic-local`?** Direct and explicit. On Linux, `make magic` just redirects to `magic-local` anyway.
+
+### macOS Testing
+
+**For Phase 1.1 (build infrastructure only):**
+```bash
+# Verify your environment
+make verify-setup
+
+# Quick testing without VM (recommended for Phase 1.1)
+make magic-local
+```
+
+**For Phase 1.2+ (when testing actual eBPF execution):**
+```bash
+# Full testing with VM (can load eBPF into kernel)
+make magic
+```
+
+**What's the difference?**
+- `make magic-local`: Builds on macOS, compiles eBPF to bytecode (fast, no VM)
+- `make magic`: Uses Lima VM, can actually load eBPF programs (required for Phase 1.2+)
 
 ## Architecture
 
@@ -156,48 +217,71 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guid
 
 ### Quick Development Workflow
 
-**One command to build, test, and install:**
-
+**Step 1: Verify your environment**
 ```bash
-git clone https://github.com/Ignoramuss/orb8.git
-cd orb8
-make magic        # Builds, tests, installs orb8
+make verify-setup
 ```
 
-On macOS, this uses a Lima VM. On Linux, it runs natively.
-
-After `make magic` completes:
-
-**macOS:**
-```bash
-make shell        # Enter VM
-orb8 --help       # orb8 is now in PATH
-orb8 trace network --namespace default
-```
+**Step 2: Build, test, and install**
 
 **Linux:**
 ```bash
-orb8 --help       # orb8 is now in PATH
-sudo orb8 trace network --namespace default  # eBPF requires root
+make magic-local    # Native build, test, install
+cargo build         # Or build manually
+cargo test          # Run tests
 ```
+
+**macOS (Phase 1.1 - build infrastructure):**
+```bash
+make magic-local    # Fast local testing
+# eBPF compiles to bytecode but doesn't load (no kernel)
+```
+
+**macOS (Phase 1.2+ - actual eBPF execution):**
+```bash
+make magic          # Full VM-based testing
+make shell          # Enter VM
+orb8 --help
+```
+
+**Expected output for Phase 1.1:**
+Both platforms will show:
+```
+warning: target filter `bins` specified, but no targets matched
+Finished `release` profile [optimized]
+```
+This is expected - probe binaries come in Phase 1.2.
 
 ### Manual Development Setup
 
-**macOS:**
-```bash
-make dev          # Creates Linux VM (5-10 min first time)
-make shell        # Enter VM
-cargo build
-cargo test
-```
-
 **Linux:**
 ```bash
+# Verify environment
+make verify-setup
+
+# Build and test
+cargo build
+cargo test
+
+# For Phase 1.1 specifically
+cargo build -p orb8-probes          # eBPF build infrastructure
+cargo clippy -p orb8-probes -- -D warnings
+```
+
+**macOS:**
+```bash
+# Quick setup (no VM)
+make verify-setup
+cargo build -p orb8-probes
+
+# Full setup (with VM for eBPF execution)
+make dev            # Creates VM (5-10 min first time)
+make shell          # Enter VM
 cargo build
 cargo test
 ```
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed setup instructions and troubleshooting.
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for detailed setup instructions and troubleshooting.
 
 ## License
 

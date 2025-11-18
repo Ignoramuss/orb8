@@ -1,21 +1,28 @@
 # Platform detection
 UNAME_S := $(shell uname -s)
 
-.PHONY: help dev shell test build install uninstall clean stop status install-tools fmt clippy check magic build-local test-local install-local magic-local
+.PHONY: help dev shell test build install uninstall clean stop status install-tools fmt clippy check magic build-local test-local install-local magic-local build-ebpf verify-setup
 
 help:
 	@echo "orb8 Development Commands"
 	@echo ""
 	@echo "Quick Start:"
 	@echo "  make magic        - Build, test, and install orb8 (one command)"
+	@echo "  make verify-setup - Verify development environment is properly configured"
 	@echo ""
 	@echo "Development:"
 	@echo "  make dev          - Setup development environment (creates Lima VM on macOS)"
 	@echo "  make shell        - Enter development VM"
 	@echo "  make test         - Run tests"
 	@echo "  make build        - Build orb8"
+	@echo "  make build-ebpf   - Build only eBPF probes"
 	@echo "  make install      - Install orb8 to ~/.cargo/bin/"
 	@echo "  make uninstall    - Remove orb8 from ~/.cargo/bin/"
+	@echo ""
+	@echo "Code Quality:"
+	@echo "  make fmt          - Format code"
+	@echo "  make clippy       - Run linter"
+	@echo "  make check        - Type check"
 	@echo ""
 	@echo "Local (no VM):"
 	@echo "  make build-local  - Build on current OS"
@@ -119,3 +126,46 @@ install-tools:
 	@which limactl > /dev/null || brew install lima
 	@which qemu-system-aarch64 > /dev/null || brew install qemu
 	@echo "Tools installed (Lima + QEMU)"
+
+# Build eBPF probes specifically
+build-ebpf:
+ifeq ($(UNAME_S),Linux)
+	@echo "Building eBPF probes..."
+	@cargo build -p orb8-probes
+else
+	@echo "Building eBPF probes in VM..."
+	@limactl shell orb8-dev bash -c "cd $(shell pwd) && cargo build -p orb8-probes"
+endif
+
+# Verify development environment setup
+verify-setup:
+ifeq ($(UNAME_S),Linux)
+	@echo "Verifying Linux development environment..."
+	@echo "✓ Platform: Linux (native eBPF support)"
+	@rustc --version || (echo "✗ Rust not installed" && exit 1)
+	@rustc +nightly --version || (echo "✗ Rust nightly not installed" && exit 1)
+	@rustup component list --installed --toolchain nightly | grep -q rust-src || (echo "✗ rust-src not installed (run: rustup component add rust-src --toolchain nightly)" && exit 1)
+	@which bpf-linker > /dev/null || (echo "✗ bpf-linker not installed (run: cargo install bpf-linker)" && exit 1)
+	@which bpftool > /dev/null || (echo "✗ bpftool not installed" && exit 1)
+	@echo "✓ Rust stable: $$(rustc --version)"
+	@echo "✓ Rust nightly: $$(rustc +nightly --version)"
+	@echo "✓ rust-src component: installed"
+	@echo "✓ bpf-linker: $$(bpf-linker --version)"
+	@echo "✓ bpftool: $$(bpftool version)"
+	@echo "✓ Kernel: $$(uname -r)"
+	@test -f /sys/kernel/btf/vmlinux && echo "✓ BTF enabled" || echo "⚠ BTF not found (some eBPF features may not work)"
+	@echo ""
+	@echo "Environment ready for eBPF development!"
+else
+	@echo "Verifying macOS development environment..."
+	@echo "✓ Platform: macOS (using Lima VM for eBPF)"
+	@which limactl > /dev/null || (echo "✗ Lima not installed (run: make install-tools)" && exit 1)
+	@echo "✓ Lima installed"
+	@limactl list | grep -q orb8-dev && echo "✓ orb8-dev VM exists" || (echo "⚠ orb8-dev VM not created (run: make dev)" && exit 0)
+	@limactl list | grep -q "orb8-dev.*Running" && echo "✓ VM is running" || echo "⚠ VM is stopped (run: make dev to start)"
+	@rustc --version > /dev/null 2>&1 && echo "✓ Rust (local): $$(rustc --version)" || echo "⚠ Rust not installed locally (optional for macOS)"
+	@rustc +nightly --version > /dev/null 2>&1 && echo "✓ Rust nightly (local): installed" || echo "⚠ Rust nightly not installed locally (optional for macOS)"
+	@rustup component list --installed --toolchain nightly 2>/dev/null | grep -q rust-src && echo "✓ rust-src component (local): installed" || echo "⚠ rust-src not installed locally (run: rustup component add rust-src --toolchain nightly)"
+	@echo ""
+	@echo "Environment ready! Use 'make shell' to enter VM for full eBPF development."
+endif
