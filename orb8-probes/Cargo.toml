@@ -6,9 +6,13 @@ license = "Apache-2.0"
 description = "eBPF probes for orb8 (kernel space)"
 
 [dependencies]
-# eBPF dependencies will be added in Phase 1
-# aya-bpf = "0.1"
-# aya-log-ebpf = "0.1"
+aya-ebpf = "0.1.1"
+aya-log-ebpf = "0.1.1"
+
+[build-dependencies]
+aya-build = "0.1.2"
+cargo_metadata = "0.19"
+anyhow = "1.0"
 
 [lib]
 path = "src/lib.rs"
