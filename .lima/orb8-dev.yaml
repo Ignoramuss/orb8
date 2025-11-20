@@ -45,13 +45,16 @@ provision:
         less \
         jq
 
-      # Install eBPF tools
+      # Install eBPF tools and LLVM
       apt-get install -y \
         llvm-14 \
+        llvm-14-dev \
         clang-14 \
+        libclang-14-dev \
         libbpf-dev \
         linux-headers-generic \
-        linux-tools-generic
+        linux-tools-generic \
+        bpftool
 
       # Install kubectl
       curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | \
@@ -75,7 +78,7 @@ provision:
       #!/bin/bash
       set -eux -o pipefail
 
-      # Install Rust
+      # Install Rust (stable and nightly)
       curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- \
         -y \
         --default-toolchain stable \
@@ -85,11 +88,21 @@ provision:
       # Source Rust environment
       source "$HOME/.cargo/env"
 
+      # Install nightly toolchain with rust-src for eBPF
+      rustup toolchain install nightly --component rust-src
+
+      # Install aya-specific tools
+      cargo install bpf-linker
+      cargo install cargo-generate
+
       # Verify installations
       rustc --version
+      rustc +nightly --version
       cargo --version
+      bpf-linker --version
       kubectl version --client
       minikube version
+      bpftool version
 
 message: |
   ========================================
@@ -98,8 +111,10 @@ message: |
 
   The Linux VM is running with:
   - Ubuntu 22.04
-  - Rust (latest stable)
-  - eBPF tools (LLVM, clang, libbpf)
+  - Rust (stable + nightly with rust-src)
+  - bpf-linker (eBPF linker for Rust)
+  - cargo-generate (project scaffolding)
+  - eBPF tools (LLVM 14, clang, libbpf, bpftool)
   - kubectl
   - minikube
   - Docker
