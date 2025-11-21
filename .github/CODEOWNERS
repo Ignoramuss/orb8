@@ -1,0 +1,5 @@
+# CODEOWNERS
+# These owners will be requested for review when anyone opens a pull request.
+
+# Global owners (all files)
+* @Ignoramuss @shvbsle
