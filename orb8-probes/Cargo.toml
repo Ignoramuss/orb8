@@ -17,3 +17,8 @@ anyhow = "1.0"
 [lib]
 path = "src/lib.rs"
 test = false
+
+[[bin]]
+name = "network_probe"
+path = "src/bin/network_probe.rs"
+required-features = []

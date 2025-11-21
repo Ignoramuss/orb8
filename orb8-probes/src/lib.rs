@@ -7,10 +7,9 @@
 //!
 //! Probes extract cgroup IDs to enable container/pod identification.
 //!
-//! Implementation will be added in Phase 1.
+//! eBPF probe implementations are in src/bin/
 
-#![no_std]
-#![no_main]
+#![cfg_attr(not(test), no_std)]
 
 #[cfg(not(test))]
 #[panic_handler]

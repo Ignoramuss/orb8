@@ -109,20 +109,28 @@ orb8 trace gpu --namespace ml-training
 
 ## Testing
 
-### Testing Phase 1.1 (Current)
+### Testing Phase 1.2 (Current)
 
-Phase 1.1 establishes the eBPF build infrastructure. You can test this on **both macOS and Linux** without needing a VM.
+Phase 1.2 implements the first "Hello World" eBPF probe that logs network packets.
 
 **What works:**
-- eBPF programs compile to bytecode (`.bpf.o` files)
+- eBPF probe compiles to bytecode (`.bpf.o` files) on Linux
 - Build infrastructure validation
 - Unit tests
 
-**Expected output:**
+**On macOS:**
+```bash
+cargo build -p orb8-probes --lib  # Compiles probe code
+# eBPF compilation skipped with warning (expected)
 ```
-warning: target filter `bins` specified, but no targets matched
+
+**On Linux / Lima VM:**
+```bash
+cargo build -p orb8-probes        # Compiles eBPF bytecode
+# Generates .bpf.o files in target/bpfel-unknown-none/release/
 ```
-This is normal - we don't have actual probe binaries yet (coming in Phase 1.2).
+
+**Note:** Actual probe loading and testing requires Phase 1.3 (user-space loader).
 
 ### Linux Testing (Recommended: `make magic-local`)
 
