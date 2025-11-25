@@ -109,28 +109,42 @@ orb8 trace gpu --namespace ml-training
 
 ## Testing
 
-### Testing Phase 1.2 (Current)
+### Testing the eBPF Agent (Phase 1.2+)
 
-Phase 1.2 implements the first "Hello World" eBPF probe that logs network packets.
+Phase 1.2 implements the "Hello World" eBPF probe with full probe loading.
 
 **What works:**
-- eBPF probe compiles to bytecode (`.bpf.o` files) on Linux
-- Build infrastructure validation
-- Unit tests
+- eBPF probe compiles to bytecode
+- Agent loads probe into kernel
+- Probe attaches to network interfaces (loopback)
+- eBPF logs are captured in userspace
 
-**On macOS:**
+**Testing on macOS (via Lima VM):**
 ```bash
-cargo build -p orb8-probes --lib  # Compiles probe code
-# eBPF compilation skipped with warning (expected)
+# Build the agent (compiles eBPF probes automatically)
+make build-agent
+
+# Run the agent (requires sudo, use Ctrl+C to stop)
+make run-agent
 ```
 
-**On Linux / Lima VM:**
+**Testing on Linux (native):**
 ```bash
-cargo build -p orb8-probes        # Compiles eBPF bytecode
-# Generates .bpf.o files in target/bpfel-unknown-none/release/
+# Build the agent
+cargo build -p orb8-agent
+
+# Run the agent (requires root for eBPF)
+sudo ./target/debug/orb8-agent
 ```
 
-**Note:** Actual probe loading and testing requires Phase 1.3 (user-space loader).
+**Verifying it works:**
+1. Start the agent with `make run-agent`
+2. In another terminal (inside VM if on macOS): `ping 127.0.0.1`
+3. You should see logs like:
+   ```
+   [INFO  network_probe] Hello from eBPF! packet_len=98
+   ```
+4. Press Ctrl+C to stop the agent
 
 ### Linux Testing (Recommended: `make magic-local`)
 
