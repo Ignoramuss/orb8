@@ -83,5 +83,5 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 # Linux-only dependencies (eBPF)
 [target.'cfg(target_os = "linux")'.dependencies]
-aya = { version = "0.12", features = ["async_tokio"] }
+aya = { version = "0.13", features = ["async_tokio"] }
 aya-log = "0.2"
