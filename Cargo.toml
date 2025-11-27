@@ -60,15 +60,27 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+panic = "abort"
 
 [profile.dev]
 opt-level = 0
 debug = true
+panic = "abort"
 
 [workspace]
 members = [
     ".",
     "orb8-probes",
+    "orb8-common",
+    "orb8-agent",
+    "orb8-server",
+    "orb8-cli",
+    "orb8-proto",
+]
+
+# Exclude eBPF crate from default build to prevent cargo from building it for host
+default-members = [
+    ".",
     "orb8-common",
     "orb8-agent",
     "orb8-server",
@@ -83,5 +95,5 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 # Linux-only dependencies (eBPF)
 [target.'cfg(target_os = "linux")'.dependencies]
-aya = { version = "0.12", features = ["async_tokio"] }
+aya = { version = "0.13", features = ["async_tokio"] }
 aya-log = "0.2"

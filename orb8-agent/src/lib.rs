@@ -7,5 +7,6 @@
 //! - Map cgroup IDs to pods
 //! - Aggregate metrics
 //! - Expose gRPC API (:9090) and Prometheus metrics (:9091)
-//!
-//! Implementation will be added in Phase 1-4.
+
+#[cfg(target_os = "linux")]
+pub mod probe_loader;
