@@ -2,10 +2,13 @@
 
 use anyhow::{anyhow, Context, Result};
 use aya::{
+    maps::RingBuf,
     programs::{tc, SchedClassifier, TcAttachType},
     Ebpf,
 };
 use log::{info, warn};
+use orb8_common::PacketEvent;
+use std::mem;
 use std::path::Path;
 
 /// Manages eBPF probe lifecycle
@@ -55,12 +58,51 @@ impl ProbeManager {
         &mut self.bpf
     }
 
+    /// Get the events ring buffer for polling packet events
+    pub fn events_ring_buf(&mut self) -> Result<RingBuf<&mut aya::maps::MapData>> {
+        let map = self.bpf.map_mut("EVENTS").ok_or_else(|| {
+            let available_maps: Vec<_> = self.bpf.maps().map(|(name, _)| name).collect();
+            anyhow!(
+                "EVENTS map not found in eBPF object. Available maps: {:?}",
+                available_maps
+            )
+        })?;
+        RingBuf::try_from(map).context("Failed to create RingBuf from EVENTS map")
+    }
+
     /// Detach and unload all probes
     pub fn unload(self) {
         info!("Unloading eBPF probes...");
         drop(self.bpf);
         info!("Probes unloaded");
     }
+}
+
+/// Poll events from the ring buffer
+pub fn poll_events(ring_buf: &mut RingBuf<&mut aya::maps::MapData>) -> Vec<PacketEvent> {
+    const MAX_BATCH_SIZE: usize = 1024;
+    let mut events = Vec::new();
+
+    while let Some(item) = ring_buf.next() {
+        if events.len() >= MAX_BATCH_SIZE {
+            warn!("Hit maximum batch size ({}), stopping poll", MAX_BATCH_SIZE);
+            break;
+        }
+
+        let expected_size = mem::size_of::<PacketEvent>();
+        if item.len() == expected_size {
+            let event: PacketEvent =
+                unsafe { std::ptr::read_unaligned(item.as_ptr() as *const PacketEvent) };
+            events.push(event);
+        } else {
+            warn!(
+                "Malformed event: expected {} bytes, got {} bytes - skipping",
+                expected_size,
+                item.len()
+            );
+        }
+    }
+    events
 }
 
 /// Load the network probe eBPF program

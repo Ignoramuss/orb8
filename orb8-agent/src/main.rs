@@ -21,7 +21,8 @@ fn main() -> Result<()> {
 async fn main() -> Result<()> {
     use aya_log::EbpfLogger;
     use log::{info, warn};
-    use orb8_agent::probe_loader::ProbeManager;
+    use orb8_agent::probe_loader::{poll_events, ProbeManager};
+    use std::time::Duration;
     use tokio::signal;
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -39,11 +40,30 @@ async fn main() -> Result<()> {
 
     manager.attach_to_loopback()?;
 
+    let mut ring_buf = manager.events_ring_buf()?;
+
     info!("orb8-agent running. Press Ctrl+C to exit.");
+    info!("Polling ring buffer for events...");
 
-    signal::ctrl_c().await?;
+    loop {
+        tokio::select! {
+            _ = signal::ctrl_c() => {
+                info!("Shutdown signal received");
+                break;
+            }
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                let events = poll_events(&mut ring_buf);
+                for event in events {
+                    info!(
+                        "Event: timestamp={}ns, packet_len={} bytes",
+                        event.timestamp_ns,
+                        event.packet_len
+                    );
+                }
+            }
+        }
+    }
 
-    info!("Shutdown signal received");
     manager.unload();
 
     info!("orb8-agent stopped");
