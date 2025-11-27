@@ -9,6 +9,15 @@ description = "eBPF probes for orb8 (kernel space)"
 aya-ebpf = "0.1.1"
 aya-log-ebpf = "0.1.0"
 
+[build-dependencies]
+aya-build = "0.1.2"
+cargo_metadata = "0.23"
+anyhow = "1.0"
+
+[lib]
+path = "src/lib.rs"
+test = false
+
 [[bin]]
 name = "network_probe"
 path = "src/network_probe.rs"
