@@ -193,6 +193,37 @@ orb8-server ──┤
 orb8-agent ───┴──> orb8-common <─── orb8-probes
 ```
 
+### Distribution
+
+orb8 crates are distributed via multiple channels:
+
+**crates.io** (Rust library/binary distribution):
+- `orb8` - Root crate re-exporting `orb8-common` and `orb8-cli` as optional features
+- `orb8-common` - Shared types between eBPF probes and userspace
+- `orb8-cli` - CLI command definitions (library)
+- `orb8-agent` - Node agent binary (`cargo install orb8-agent`, Linux-only)
+
+**Not on crates.io**:
+- `orb8-probes` - eBPF bytecode compiled for `bpfel-unknown-none` target; embedded in `orb8-agent` binary
+- `orb8-server` - Central API server (stub, Phase 4)
+- `orb8-proto` - gRPC protocol definitions (stub, Phase 4)
+
+**Container Images** (planned):
+- `ghcr.io/ignoramuss/orb8-agent` - For Kubernetes DaemonSet deployment
+- `ghcr.io/ignoramuss/orb8-server` - For central server deployment
+
+**Usage**:
+```bash
+# Add as Rust dependency
+cargo add orb8
+
+# Install agent binary (Linux only)
+cargo install orb8-agent
+
+# Kubernetes deployment (future)
+kubectl apply -f https://raw.githubusercontent.com/Ignoramuss/orb8/main/deploy/
+```
+
 ---
 
 ## Operating Modes
@@ -1107,5 +1138,5 @@ For high-traffic production clusters (>10Gbps per node):
 ---
 
 **Document Version**: 1.0
-**Last Updated**: 2025-01-12
+**Last Updated**: 2025-11-27
 **Authors**: orb8 maintainers
