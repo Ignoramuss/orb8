@@ -1,6 +1,6 @@
 [package]
 name = "orb8"
-version = "0.0.0"
+version = "0.0.1"
 edition = "2021"
 rust-version = "1.75"
 authors = ["Ignoramuss"]
@@ -46,6 +46,15 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures = "0.3"
 bytes = "1.5"
 async-trait = "0.1"
+
+# Sub-crates (optional, re-exported)
+orb8-common = { version = "0.0.1", path = "orb8-common", optional = true }
+orb8-cli = { version = "0.0.1", path = "orb8-cli", optional = true }
+
+[features]
+default = ["common", "cli"]
+common = ["dep:orb8-common"]
+cli = ["dep:orb8-cli"]
 
 [dev-dependencies]
 criterion = "0.5"
