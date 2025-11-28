@@ -20,5 +20,4 @@ test = false
 
 [[bin]]
 name = "network_probe"
-path = "src/bin/network_probe.rs"
-required-features = []
+path = "src/network_probe.rs"

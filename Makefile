@@ -16,6 +16,8 @@ help:
 	@echo "  make test         - Run tests"
 	@echo "  make build        - Build orb8"
 	@echo "  make build-ebpf   - Build only eBPF probes"
+	@echo "  make build-agent  - Build orb8-agent"
+	@echo "  make run-agent    - Build and run orb8-agent (requires sudo)"
 	@echo "  make install      - Install orb8 to ~/.cargo/bin/"
 	@echo "  make uninstall    - Remove orb8 from ~/.cargo/bin/"
 	@echo ""
@@ -135,6 +137,27 @@ ifeq ($(UNAME_S),Linux)
 else
 	@echo "Building eBPF probes in VM..."
 	@limactl shell orb8-dev bash -c "cd $(shell pwd) && cargo build -p orb8-probes"
+endif
+
+# Build and run the agent (for testing)
+run-agent:
+ifeq ($(UNAME_S),Linux)
+	@echo "Building and running orb8-agent..."
+	@cargo build -p orb8-agent
+	@sudo ./target/debug/orb8-agent
+else
+	@echo "Building and running orb8-agent in VM..."
+	@limactl shell orb8-dev bash -c "cd $(shell pwd) && cargo build -p orb8-agent && sudo ./target/debug/orb8-agent"
+endif
+
+# Build agent only
+build-agent:
+ifeq ($(UNAME_S),Linux)
+	@echo "Building orb8-agent..."
+	@cargo build -p orb8-agent
+else
+	@echo "Building orb8-agent in VM..."
+	@limactl shell orb8-dev bash -c "cd $(shell pwd) && cargo build -p orb8-agent"
 endif
 
 # Verify development environment setup
