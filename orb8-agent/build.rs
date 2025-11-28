@@ -14,12 +14,18 @@ fn main() -> anyhow::Result<()> {
             "cargo:warning=eBPF compilation skipped on {}. Use Lima VM for eBPF builds.",
             env::consts::OS
         );
+        // Create empty stub to satisfy include_bytes_aligned! at compile time
+        let out_dir = env::var("OUT_DIR")?;
+        std::fs::write(format!("{}/network_probe", out_dir), [])?;
         return Ok(());
     }
 
     // Skip eBPF build in CI (no bpf-linker available)
     if env::var("CI").is_ok() {
         println!("cargo:warning=eBPF compilation skipped in CI. Use dedicated eBPF build job.");
+        // Create empty stub to satisfy include_bytes_aligned! at compile time
+        let out_dir = env::var("OUT_DIR")?;
+        std::fs::write(format!("{}/network_probe", out_dir), [])?;
         return Ok(());
     }
 
