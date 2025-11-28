@@ -16,6 +16,12 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Skip eBPF build in CI (no bpf-linker available)
+    if env::var("CI").is_ok() {
+        println!("cargo:warning=eBPF compilation skipped in CI. Use dedicated eBPF build job.");
+        return Ok(());
+    }
+
     let cargo_metadata::Metadata { packages, .. } =
         aya_build::cargo_metadata::MetadataCommand::new()
             .no_deps()
