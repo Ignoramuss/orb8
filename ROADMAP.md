@@ -69,7 +69,7 @@ Phase 8 (Advanced)
 
 **Goal**: Establish Cargo workspace, development environment, and CI/CD
 
-**Status**: 🚧 IN PROGRESS (90% complete)
+**Status**: ✅ COMPLETE
 
 ### Tasks
 
@@ -106,6 +106,7 @@ make shell  # Can enter VM and run cargo build
 - [x] GitHub Actions workflow for `cargo test`
 - [x] GitHub Actions workflow for `cargo clippy`
 - [x] GitHub Actions workflow for `cargo fmt --check`
+- [x] Crates.io publishing (orb8, orb8-common, orb8-cli, orb8-agent)
 - [ ] Container image builds (agent, server, CLI)
 - [ ] Multi-arch builds (amd64, arm64)
 
@@ -121,6 +122,37 @@ make shell  # Can enter VM and run cargo build
 - [x] LICENSE (Apache 2.0)
 
 **Deliverable**: New contributors can onboard in <30 minutes
+
+---
+
+## Distribution Strategy
+
+orb8 uses multiple distribution channels depending on the use case.
+
+### crates.io (v0.0.1)
+
+| Crate | Purpose | Install Command |
+|-------|---------|-----------------|
+| `orb8` | Root library with re-exports | `cargo add orb8` |
+| `orb8-common` | Shared types (eBPF/userspace) | `cargo add orb8-common` |
+| `orb8-cli` | CLI command definitions | `cargo add orb8-cli` |
+| `orb8-agent` | Node agent binary (Linux-only) | `cargo install orb8-agent` |
+
+### Not Published to crates.io
+
+| Crate | Reason |
+|-------|--------|
+| `orb8-probes` | eBPF bytecode (bpfel target, embedded in agent) |
+| `orb8-server` | Stub implementation (Phase 4) |
+| `orb8-proto` | Stub implementation (Phase 4) |
+
+### Future Distribution (Phase 4+)
+
+- [ ] Container images on ghcr.io (`orb8/agent`, `orb8/server`)
+- [ ] Helm chart for Kubernetes deployment
+- [ ] GitHub Releases with pre-built binaries
+- [ ] Multi-arch builds (amd64, arm64)
+- [ ] `orb8-server` and `orb8-proto` on crates.io (when implemented)
 
 ---
 
@@ -2093,12 +2125,12 @@ This roadmap provides a **phase-based, dependency-driven** implementation plan f
 - ✅ Technical debt explicitly managed
 - ✅ Research spikes for high-uncertainty areas
 
-**Current Status**: Phase 0 complete (Foundation)
+**Current Status**: Phase 1 in progress (eBPF Infrastructure - ring buffer implemented)
 
-**Next Step**: Phase 1 (eBPF Infrastructure)
+**Next Step**: Phase 1.5 (Testing Infrastructure)
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: 2025-01-12
+**Document Version**: 1.1
+**Last Updated**: 2025-11-27
 **Authors**: orb8 maintainers

@@ -1,16 +1,21 @@
 [package]
 name = "orb8-agent"
-version = "0.0.0"
+version = "0.0.1"
 edition = "2021"
 license = "Apache-2.0"
 description = "Node agent for orb8 (DaemonSet)"
+repository = "https://github.com/Ignoramuss/orb8"
+homepage = "https://github.com/Ignoramuss/orb8"
+readme = "../README.md"
+keywords = ["ebpf", "observability", "kubernetes", "agent", "daemonset"]
+categories = ["command-line-utilities", "development-tools::profiling"]
 
 [dependencies]
 tokio = { version = "1.41", features = ["full"] }
 anyhow = "1.0"
 log = "0.4"
 env_logger = "0.11"
-orb8-common = { path = "../orb8-common" }
+orb8-common = { version = "0.0.1", path = "../orb8-common" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 aya = { version = "0.13", features = ["async_tokio"] }
