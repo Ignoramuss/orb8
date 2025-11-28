@@ -99,27 +99,31 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-features -- -D warnings
 
-  # Placeholder for eBPF build - requires bpf-linker
-  # Uncomment when eBPF code is added
-  # ebpf-build:
-  #   name: Build eBPF
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v5
-  #
-  #     - name: Install Rust
-  #       uses: dtolnay/rust-toolchain@stable
-  #
-  #     - name: Install LLVM and Clang
-  #       run: |
-  #         sudo apt-get update
-  #         sudo apt-get install -y llvm clang
-  #
-  #     - name: Install bpf-linker
-  #       run: cargo install bpf-linker
-  #
-  #     - name: Build eBPF
-  #       run: cargo xtask build-ebpf
+  build-ebpf:
+    name: Build eBPF
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - name: Cache bpf-linker
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/bpf-linker
+          key: ${{ runner.os }}-bpf-linker-llvm21
+
+      - name: Install bpf-linker
+        run: |
+          if ! command -v bpf-linker &> /dev/null; then
+            cargo install bpf-linker --git https://github.com/aya-rs/bpf-linker.git --features llvm-21
+          fi
+
+      - name: Build eBPF probes
+        run: cargo +nightly build -p orb8-probes --target bpfel-unknown-none -Z build-std=core --release
 
   # Placeholder for integration tests
   # Requires Kubernetes cluster (kind/minikube)

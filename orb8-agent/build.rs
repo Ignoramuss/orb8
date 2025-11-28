@@ -1,4 +1,5 @@
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
+use aya_build::{Package, Toolchain};
 use std::env;
 
 fn main() -> anyhow::Result<()> {
@@ -13,21 +14,29 @@ fn main() -> anyhow::Result<()> {
             "cargo:warning=eBPF compilation skipped on {}. Use Lima VM for eBPF builds.",
             env::consts::OS
         );
+        // Create empty stub to satisfy include_bytes_aligned! at compile time
+        let out_dir = env::var("OUT_DIR")?;
+        std::fs::write(format!("{}/network_probe", out_dir), [])?;
         return Ok(());
     }
 
-    let cargo_metadata::Metadata { packages, .. } =
-        aya_build::cargo_metadata::MetadataCommand::new()
-            .no_deps()
-            .exec()
-            .context("MetadataCommand::exec")?;
+    // Skip eBPF build in CI (no bpf-linker available)
+    if env::var("CI").is_ok() {
+        println!("cargo:warning=eBPF compilation skipped in CI. Use dedicated eBPF build job.");
+        // Create empty stub to satisfy include_bytes_aligned! at compile time
+        let out_dir = env::var("OUT_DIR")?;
+        std::fs::write(format!("{}/network_probe", out_dir), [])?;
+        return Ok(());
+    }
 
-    let ebpf_package = packages
-        .into_iter()
-        .find(|pkg| pkg.name == "orb8-probes")
-        .ok_or_else(|| anyhow!("orb8-probes package not found"))?;
+    let ebpf_package = Package {
+        name: "orb8-probes",
+        root_dir: "../orb8-probes",
+        no_default_features: false,
+        features: &[],
+    };
 
-    aya_build::build_ebpf([ebpf_package])?;
+    aya_build::build_ebpf([ebpf_package], Toolchain::Nightly)?;
 
     let out_dir = env::var("OUT_DIR")?;
     let probe_path = format!("{}/network_probe", out_dir);
