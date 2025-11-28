@@ -1,9 +1,14 @@
 [package]
 name = "orb8-cli"
-version = "0.0.0"
+version = "0.0.1"
 edition = "2021"
 license = "Apache-2.0"
 description = "Command-line interface for orb8"
+repository = "https://github.com/Ignoramuss/orb8"
+homepage = "https://github.com/Ignoramuss/orb8"
+readme = "../README.md"
+keywords = ["ebpf", "observability", "kubernetes", "cli"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
