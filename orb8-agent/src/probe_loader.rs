@@ -60,8 +60,9 @@ impl ProbeManager {
 
     /// Get the events ring buffer for polling packet events
     pub fn events_ring_buf(&mut self) -> Result<RingBuf<&mut aya::maps::MapData>> {
+        // Collect map names first to avoid borrow conflict in error path
+        let available_maps: Vec<_> = self.bpf.maps().map(|(name, _)| name.to_string()).collect();
         let map = self.bpf.map_mut("EVENTS").ok_or_else(|| {
-            let available_maps: Vec<_> = self.bpf.maps().map(|(name, _)| name).collect();
             anyhow!(
                 "EVENTS map not found in eBPF object. Available maps: {:?}",
                 available_maps
