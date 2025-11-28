@@ -1,4 +1,5 @@
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
+use aya_build::{Package, Toolchain};
 use std::env;
 
 fn main() -> anyhow::Result<()> {
@@ -22,18 +23,14 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let cargo_metadata::Metadata { packages, .. } =
-        aya_build::cargo_metadata::MetadataCommand::new()
-            .no_deps()
-            .exec()
-            .context("MetadataCommand::exec")?;
+    let ebpf_package = Package {
+        name: "orb8-probes",
+        root_dir: "../orb8-probes",
+        no_default_features: false,
+        features: &[],
+    };
 
-    let ebpf_package = packages
-        .into_iter()
-        .find(|pkg| pkg.name == "orb8-probes")
-        .ok_or_else(|| anyhow!("orb8-probes package not found"))?;
-
-    aya_build::build_ebpf([ebpf_package])?;
+    aya_build::build_ebpf([ebpf_package], Toolchain::Nightly)?;
 
     let out_dir = env::var("OUT_DIR")?;
     let probe_path = format!("{}/network_probe", out_dir);
