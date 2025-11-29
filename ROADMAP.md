@@ -154,6 +154,33 @@ orb8 uses multiple distribution channels depending on the use case.
 - [ ] Multi-arch builds (amd64, arm64)
 - [ ] `orb8-server` and `orb8-proto` on crates.io (when implemented)
 
+### Release Process
+
+**Version Scheme**: [Semantic Versioning](https://semver.org/)
+- `0.0.x` - Initial development (breaking changes expected)
+- `0.1.0` - First feature-complete release (Phase 3: Network MVP)
+- `1.0.0` - Production-ready (Phase 8 complete)
+
+**Automated Release** (via GitHub Actions):
+1. Update version in workspace `Cargo.toml` files
+2. Update `CHANGELOG.md` with release notes
+3. Create and push tag: `git tag -a v0.0.2 -m "Release v0.0.2" && git push origin v0.0.2`
+4. CI validates, publishes to crates.io, creates GitHub Release
+
+**Manual Fallback**:
+```bash
+# Publish in dependency order
+cargo publish -p orb8-common
+sleep 15
+cargo publish -p orb8-cli
+sleep 15
+cargo publish -p orb8-agent
+sleep 15
+cargo publish -p orb8
+```
+
+**Required Secret**: `CARGO_REGISTRY_TOKEN` (add via GitHub repo settings)
+
 ---
 
 ## Phase 1: eBPF Infrastructure
@@ -170,10 +197,10 @@ orb8 uses multiple distribution channels depending on the use case.
 
 **Files**: `orb8-probes/`
 
-- [ ] Create `orb8-probes/Cargo.toml` with aya-bpf dependencies
-- [ ] Create `orb8-probes/build.rs` for eBPF compilation
-- [ ] Verify eBPF programs compile to `.bpf.o` format
-- [ ] Test on kernel 5.15+ with BTF enabled
+- [x] Create `orb8-probes/Cargo.toml` with aya-bpf dependencies
+- [x] Create `orb8-probes/build.rs` for eBPF compilation
+- [x] Verify eBPF programs compile to `.bpf.o` format
+- [x] Test on kernel 5.15+ with BTF enabled
 
 **Implementation**:
 ```rust
@@ -198,10 +225,10 @@ fn main() {
 
 **Files**: `orb8-probes/src/network_probe.rs`
 
-- [ ] Create skeleton tc probe that logs "Hello from eBPF"
-- [ ] Use aya-log-ebpf for logging
-- [ ] Attach to `lo` (loopback) interface for testing
-- [ ] Verify logs appear via `/sys/kernel/debug/tracing/trace_pipe`
+- [x] Create skeleton tc probe that logs "Hello from eBPF"
+- [x] Use aya-log-ebpf for logging
+- [x] Attach to `lo` (loopback) interface for testing
+- [x] Verify logs appear via `/sys/kernel/debug/tracing/trace_pipe`
 
 **Implementation**:
 ```rust
@@ -232,16 +259,16 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 
 **Files**: `orb8-agent/src/probe_loader.rs`
 
-- [ ] Create `ProbeManager` struct
-- [ ] Implement `load_probe()` using aya library
-- [ ] Implement `attach_tc()` for network interfaces
-- [ ] Implement `unload_all()` for cleanup
+- [x] Create `ProbeManager` struct
+- [x] Implement `load_probe()` using aya library
+- [x] Implement `attach_tc()` for network interfaces
+- [x] Implement `unload_all()` for cleanup
 - [ ] Implement pre-flight validation (before loading any probes):
   - Check kernel version >= 5.8 (`uname -r`)
   - Verify BTF availability (`/sys/kernel/btf/vmlinux` exists)
   - Validate required capabilities (CAP_BPF, CAP_NET_ADMIN, CAP_SYS_ADMIN)
   - Test compile a trivial probe to verify toolchain
-- [ ] Handle errors gracefully (verifier failures, permissions)
+- [x] Handle errors gracefully (verifier failures, permissions)
 - [ ] Graceful degradation strategy:
   - If network probe fails, continue with syscall probe only
   - If all probes fail, exit with clear error and remediation steps
@@ -292,10 +319,10 @@ impl ProbeManager {
 
 **Files**: `orb8-probes/src/network_probe.rs`, `orb8-agent/src/collector.rs`
 
-- [ ] Define ring buffer in eBPF probe
-- [ ] Write test events from eBPF → ring buffer
-- [ ] Poll ring buffer from user-space
-- [ ] Deserialize events into Rust structs
+- [x] Define ring buffer in eBPF probe
+- [x] Write test events from eBPF → ring buffer
+- [x] Poll ring buffer from user-space
+- [x] Deserialize events into Rust structs
 
 **Implementation (eBPF side)**:
 ```rust
@@ -2125,7 +2152,7 @@ This roadmap provides a **phase-based, dependency-driven** implementation plan f
 - ✅ Technical debt explicitly managed
 - ✅ Research spikes for high-uncertainty areas
 
-**Current Status**: Phase 1 in progress (eBPF Infrastructure - ring buffer implemented)
+**Current Status**: Phase 1 in progress (1.1-1.4 complete, 1.5 pending)
 
 **Next Step**: Phase 1.5 (Testing Infrastructure)
 
