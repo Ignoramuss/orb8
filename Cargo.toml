@@ -57,7 +57,7 @@ common = ["dep:orb8-common"]
 cli = ["dep:orb8-cli"]
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 tempfile = "3.8"
 
 [[bin]]
