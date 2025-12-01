@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Ensure CI passes before publishing
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  # Validate version matches tag
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get tag version
+        id: tag
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Validate version matches
+        run: |
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$CARGO_VERSION" != "${{ steps.tag.outputs.version }}" ]; then
+            echo "Tag version (${{ steps.tag.outputs.version }}) doesn't match Cargo.toml ($CARGO_VERSION)"
+            exit 1
+          fi
+
+  # Publish to crates.io using Trusted Publishing (OIDC)
+  publish:
+    needs: [ci, validate]
+    runs-on: ubuntu-latest
+    environment: "Crates publishing"
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Get OIDC token
+        uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
+      - name: Publish crates
+        uses: katyo/publish-crates@v2
+        with:
+          registry-token: ${{ steps.auth.outputs.token }}
+          ignore-unpublished-changes: true
+          publish-delay: 10000
+
+  # Create GitHub Release
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract changelog
+        id: changelog
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          NOTES=$(sed -n "/## \[${VERSION}\]/,/## \[/p" CHANGELOG.md | head -n -1 || echo "Release ${VERSION}")
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body: ${{ steps.changelog.outputs.notes }}
+          generate_release_notes: true
