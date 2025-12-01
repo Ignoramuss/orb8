@@ -5,6 +5,17 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
 [![Kubernetes](https://img.shields.io/badge/kubernetes-1.25%2B-326ce5.svg)](https://kubernetes.io/)
+[![crates.io](https://img.shields.io/crates/v/orb8.svg)](https://crates.io/crates/orb8)
+[![docs.rs](https://docs.rs/orb8/badge.svg)](https://docs.rs/orb8)
+
+### Crate Documentation
+
+| Crate | crates.io | docs.rs |
+|-------|-----------|---------|
+| `orb8` | [crates.io/crates/orb8](https://crates.io/crates/orb8) | [docs.rs/orb8](https://docs.rs/orb8) |
+| `orb8-common` | [crates.io/crates/orb8-common](https://crates.io/crates/orb8-common) | [docs.rs/orb8-common](https://docs.rs/orb8-common) |
+| `orb8-agent` | [crates.io/crates/orb8-agent](https://crates.io/crates/orb8-agent) | [docs.rs/orb8-agent](https://docs.rs/orb8-agent) |
+| `orb8-cli` | [crates.io/crates/orb8-cli](https://crates.io/crates/orb8-cli) | [docs.rs/orb8-cli](https://docs.rs/orb8-cli) |
 
 **orb8** (_orbit_) is a high-performance observability toolkit built with Rust and eBPF, designed specifically for Kubernetes clusters running AI/ML workloads. It provides deep, low-level visibility into container networking, system calls, resource utilization, and GPU performance with minimal overhead.
 
@@ -14,7 +25,7 @@
 
 Existing Kubernetes observability tools either focus on high-level metrics or security-specific use cases. orb8 fills the gap by providing:
 
-- **AI Cluster Optimized**: Built for large-scale GPU/TPU/Trainium workloads (GPU telemetry planned for v0.8.0)
+- **AI Cluster Optimized**: Built for large-scale GPU/TPU/Trainium workloads (GPU telemetry planned for v0.4.0)
 - **eBPF Performance**: Sub-1% CPU overhead with zero-copy packet inspection
 - **Kubernetes Native**: Auto-discovery of pods, namespaces, and nodes via Kubernetes API
 - **Minimal Overhead**: Designed for production environments running massive compute clusters
@@ -23,14 +34,12 @@ Existing Kubernetes observability tools either focus on high-level metrics or se
 
 ### Current (In Development)
 
-- **Network Flow Tracking**: Real-time TCP/UDP/DNS flow monitoring per container (v0.4.0)
-- **System Call Monitoring**: Security anomaly detection via syscall pattern analysis (v0.5.0)
-- **CPU Scheduling Analysis**: Identify scheduling latency and CPU throttling (v0.6.0)
-- **Memory Profiling**: Track allocation patterns and predict OOM events (v0.6.0)
+- **Network Flow Tracking**: Real-time TCP/UDP/DNS flow monitoring per container (v0.1.0 - Phase 3)
+- **System Call Monitoring**: Security anomaly detection via syscall pattern analysis (v0.3.0 - Phase 6)
 
 ### Planned
 
-- **GPU Telemetry** (v0.8.0 - Research Phase):
+- **GPU Telemetry** (v0.4.0 - Phase 7):
   - GPU utilization tracking per pod (via DCGM)
   - GPU memory usage monitoring
   - Experimental: CUDA kernel execution tracing (feasibility TBD)
@@ -81,9 +90,9 @@ kubectl apply -f deploy/orb8-daemonset.yaml
 
 ## Quick Start
 
-**Note**: orb8 is currently in Phase 0 (Foundation). eBPF probes will be functional in v0.2.0+.
+**Note**: orb8 is currently in Phase 1 (eBPF Infrastructure). Ring buffer communication is functional, and testing infrastructure (Phase 1.5) is pending.
 
-### Network Monitoring (Coming in v0.4.0)
+### Network Monitoring (Coming in v0.1.0)
 
 ```bash
 # Monitor network flows for all pods in a namespace
@@ -93,14 +102,14 @@ orb8 trace network --namespace default
 orb8 trace dns --all-namespaces
 ```
 
-### System Call Analysis (Coming in v0.5.0)
+### System Call Analysis (Coming in v0.3.0)
 
 ```bash
 # Monitor syscalls for security anomalies
 orb8 trace syscall --pod suspicious-pod-456
 ```
 
-### GPU Telemetry (Planned for v0.8.0)
+### GPU Telemetry (Planned for v0.4.0)
 
 ```bash
 # Monitor GPU utilization for AI workloads
@@ -207,18 +216,21 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed design documentati
 
 See [ROADMAP.md](ROADMAP.md) for the full development plan.
 
-**Current Status**: Pre-Alpha (Early Development)
+**Current Status**: Phase 1 (eBPF Infrastructure)
+
+Completed:
+- Phase 0: Foundation & Monorepo Setup
+- Phase 1.1-1.4: eBPF probe loading, ring buffer communication
 
 In Progress:
-- Project initialization and scaffolding (v0.1.0)
+- Phase 1.5: Testing infrastructure
 
 Planned:
-- Core eBPF probe infrastructure (v0.2.0)
-- Kubernetes API integration (v0.3.0)
-- Network flow tracing (v0.4.0)
-- GPU telemetry (v0.8.0)
-- Prometheus exporter (v0.6.0)
-- CLI dashboard (v0.7.0)
+- v0.1.0: Network Tracing MVP (Phase 3)
+- v0.2.0: Cluster Mode with Metrics (Phase 4-5)
+- v0.3.0: Syscall Monitoring (Phase 6)
+- v0.4.0: GPU Telemetry (Phase 7)
+- v1.0.0: Production Ready (Phase 8)
 
 ## Platform Support
 
@@ -323,4 +335,4 @@ Built with:
 
 ---
 
-**Note**: This project is in early development. GPU telemetry features require specific hardware and driver configurations. See [docs/GPU_SETUP.md](docs/GPU_SETUP.md) for details (coming soon).
+**Note**: This project is in early development. GPU telemetry features (Phase 7) will require specific hardware and driver configurations when implemented.
