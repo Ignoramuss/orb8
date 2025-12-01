@@ -1770,37 +1770,21 @@ fn is_dangerous_syscall(id: u32) -> bool {
 
 **Estimated Effort**: 3-4 weeks (including research spike)
 
+> **Design Reference**: See [GPU Telemetry Design](docs/ARCHITECTURE.md#gpu-telemetry-design) for industry context, per-pod attribution mechanisms, and approach comparison.
+
+**Approach**: DCGM integration via dcgm-exporter sidecar. Per-pod attribution achieved by correlating GPU device IDs with pod allocations via the kubelet pod-resources API.
+
 ### Tasks
 
-#### 7.1: Research Spike - GPU Approaches
+#### 7.1: Research Spike - Validate Per-Pod Attribution
 
-**Duration**: 1 week
+- [ ] Deploy dcgm-exporter in test cluster with GPU Operator
+- [ ] Query kubelet pod-resources API for GPU allocations
+- [ ] Validate GPU UUID → pod mapping accuracy
+- [ ] Test with MIG-partitioned GPUs if available
+- [ ] Document any gaps vs Coroot/alternative approaches
 
-- [ ] **Option A: DCGM Integration**
-  - Deploy DCGM exporter in test cluster
-  - Validate GPU → pod mapping via device plugin
-  - Measure overhead and accuracy
-  - **Deliverable**: Feasibility report
-
-- [ ] **Option B: NVML Direct**
-  - Test nvml-wrapper Rust crate
-  - Poll GPU metrics programmatically
-  - Correlate with pod metadata
-  - **Deliverable**: Proof of concept
-
-- [ ] **Option C: eBPF Driver Hooks**
-  - Research NVIDIA driver ioctl interface
-  - Attempt to attach kprobe to driver functions
-  - Document stability and breakage risk
-  - **Deliverable**: Risk assessment
-
-**Decision Criteria**:
-- Production readiness
-- Maintenance burden
-- Accuracy of per-pod attribution
-- Overhead on GPU workloads
-
-**Expected Outcome**: Choose Option A (DCGM) for MVP
+**Expected Outcome**: Confirm dcgm-exporter + pod-resources API provides accurate per-pod GPU metrics
 
 #### 7.2: DCGM Sidecar Deployment
 
@@ -1810,31 +1794,6 @@ fn is_dangerous_syscall(id: u32) -> bool {
 - [ ] Expose DCGM metrics on localhost:9400
 - [ ] Configure DCGM to scrape all GPUs
 
-**DaemonSet Update**:
-```yaml
-spec:
-  template:
-    spec:
-      containers:
-      - name: agent
-        image: orb8/agent:latest
-        # ... existing config
-
-      - name: dcgm-exporter
-        image: nvcr.io/nvidia/k8s/dcgm-exporter:latest
-        ports:
-        - containerPort: 9400
-          name: dcgm-metrics
-        securityContext:
-          capabilities:
-            add: ["SYS_ADMIN"]
-```
-
-**Success Criteria**:
-- ✅ DCGM exporter runs alongside agent
-- ✅ Metrics available at localhost:9400/metrics
-- ✅ All GPUs discovered
-
 #### 7.3: GPU Metrics Collector
 
 **Files**: `orb8-agent/src/gpu/dcgm_collector.rs`
@@ -1842,64 +1801,6 @@ spec:
 - [ ] Scrape DCGM exporter via HTTP
 - [ ] Parse Prometheus format
 - [ ] Map GPU device ID → pod using device plugin API
-
-**Implementation**:
-```rust
-// orb8-agent/src/gpu/dcgm_collector.rs
-use reqwest::Client;
-use prometheus_parse::{Scrape, Sample};
-
-pub struct DcgmCollector {
-    http_client: Client,
-    dcgm_url: String,
-    device_plugin_client: DevicePluginClient,
-}
-
-impl DcgmCollector {
-    pub async fn collect_metrics(&self) -> Result<Vec<GpuMetric>> {
-        // Scrape DCGM exporter
-        let response = self.http_client
-            .get(&format!("{}/metrics", self.dcgm_url))
-            .send()
-            .await?;
-
-        let body = response.text().await?;
-        let scrape = Scrape::parse(body.lines().map(|s| Ok(s.to_string())))?;
-
-        let mut gpu_metrics = Vec::new();
-
-        for sample in scrape.samples {
-            if sample.metric == "DCGM_FI_DEV_GPU_UTIL" {
-                let gpu_id = sample.labels.get("gpu").unwrap();
-                let utilization = sample.value;
-
-                // Map GPU ID to pod
-                if let Some(pod_info) = self.get_pod_for_gpu(gpu_id).await? {
-                    gpu_metrics.push(GpuMetric {
-                        namespace: pod_info.namespace,
-                        pod_name: pod_info.pod_name,
-                        gpu_id: gpu_id.clone(),
-                        utilization,
-                        timestamp: sample.timestamp,
-                    });
-                }
-            }
-        }
-
-        Ok(gpu_metrics)
-    }
-
-    async fn get_pod_for_gpu(&self, gpu_id: &str) -> Result<Option<PodInfo>> {
-        // Query Kubernetes device plugin allocations
-        self.device_plugin_client.get_pod_for_device(gpu_id).await
-    }
-}
-```
-
-**Success Criteria**:
-- ✅ Scrapes DCGM metrics every 10 seconds
-- ✅ Correctly maps GPU → pod
-- ✅ Handles pods without GPUs gracefully
 
 #### 7.4: GPU Metrics in Prometheus
 
@@ -1909,17 +1810,6 @@ impl DcgmCollector {
 - [ ] Export `orb8_gpu_memory_used` gauge
 - [ ] Labels: namespace, pod, gpu_id
 
-**Metrics**:
-```
-orb8_gpu_utilization{namespace="ml-training",pod="pytorch-job",gpu="0"} 95.5
-orb8_gpu_memory_used_bytes{namespace="ml-training",pod="pytorch-job",gpu="0"} 15032385536
-```
-
-**Success Criteria**:
-- ✅ Metrics exported to Prometheus
-- ✅ Grafana dashboard shows per-pod GPU usage
-- ✅ Accurate correlation with GPU workload pods
-
 #### 7.5: CLI GPU Commands
 
 **Files**: `orb8-cli/src/commands/trace.rs`
@@ -1928,27 +1818,16 @@ orb8_gpu_memory_used_bytes{namespace="ml-training",pod="pytorch-job",gpu="0"} 15
 - [ ] Display GPU utilization per pod
 - [ ] Display GPU memory usage
 
-**Output**:
-```
-NAMESPACE     POD             GPU  UTIL%  MEMORY
-ml-training   pytorch-job-1   0    95%    14GB / 16GB
-ml-training   pytorch-job-2   1    88%    12GB / 16GB
-```
-
-**Success Criteria**:
-- ✅ CLI displays GPU metrics
-- ✅ Real-time updates
-
 **Phase 7 Deliverables**
 
-✅ Research spike complete with decision (DCGM)
-✅ DCGM sidecar deployment
-✅ GPU → pod mapping
-✅ Prometheus GPU metrics
-✅ CLI GPU commands
-✅ Grafana GPU dashboard
-✅ Documentation: "GPU Telemetry Guide"
-✅ **Public Release**: v0.4.0 - GPU Telemetry
+- Research spike validating per-pod GPU attribution
+- DCGM sidecar deployment (dcgm-exporter)
+- GPU UUID → pod mapping via pod-resources API
+- Prometheus GPU metrics (utilization, memory, temperature)
+- CLI GPU commands
+- Grafana GPU dashboard
+- Documentation: "GPU Telemetry Guide"
+- **Public Release**: v0.4.0 - GPU Telemetry
 
 **User Validation Checkpoint**: Get feedback from ML/AI teams
 
@@ -2158,6 +2037,6 @@ This roadmap provides a **phase-based, dependency-driven** implementation plan f
 
 ---
 
-**Document Version**: 1.1
-**Last Updated**: 2025-11-27
+**Document Version**: 1.2
+**Last Updated**: 2025-11-30
 **Authors**: orb8 maintainers

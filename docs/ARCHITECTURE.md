@@ -33,73 +33,75 @@ Both modes leverage **eBPF probes** written entirely in **Rust** using the aya f
 ### High-Level Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Kubernetes Cluster                           │
-│                                                                 │
-│  ┌───────────────────────────────────────────────────────────┐ │
-│  │                      Node 1                                │ │
-│  │                                                            │ │
-│  │  ┌──────────────────────────────────────────────────────┐ │ │
-│  │  │              orb8-agent DaemonSet Pod                │ │ │
-│  │  │                                                       │ │ │
-│  │  │  ┌─────────────────────────────────────────────────┐ │ │ │
-│  │  │  │          KERNEL SPACE                           │ │ │ │
-│  │  │  │                                                  │ │ │ │
-│  │  │  │  eBPF Probes (Rust):                           │ │ │ │
-│  │  │  │  • network_probe (tc hook)                     │ │ │ │
-│  │  │  │  • syscall_probe (tracepoint)                  │ │ │ │
-│  │  │  │  • gpu_probe (kprobe/uprobe)                   │ │ │ │
-│  │  │  │                                                  │ │ │ │
-│  │  │  │  eBPF Maps (shared kernel/user memory):        │ │ │ │
-│  │  │  │  • FLOW_EVENTS (ring buffer)                   │ │ │ │
-│  │  │  │  • SYSCALL_EVENTS (ring buffer)                │ │ │ │
-│  │  │  │  • GPU_EVENTS (ring buffer)                    │ │ │ │
-│  │  │  │  • POD_METADATA (hashmap)                      │ │ │ │
-│  │  │  └──────────────────────────────────────────────────┘ │ │ │
-│  │  │                       ║                               │ │ │
-│  │  │                       ║ (ring buffers)                │ │ │
-│  │  │                       ▼                               │ │ │
-│  │  │  ┌─────────────────────────────────────────────────┐ │ │ │
-│  │  │  │          USER SPACE (Rust)                      │ │ │ │
-│  │  │  │                                                  │ │ │ │
-│  │  │  │  • Probe Loader (aya)                          │ │ │ │
-│  │  │  │  • Event Collector (ring buffer reader)        │ │ │ │
-│  │  │  │  • Pod Metadata Manager (K8s watcher)          │ │ │ │
-│  │  │  │  • Metrics Aggregator (time-series)            │ │ │ │
-│  │  │  │  • Agent gRPC Server :9090                     │ │ │ │
-│  │  │  │  • Prometheus Exporter :9091/metrics           │ │ │ │
-│  │  │  └──────────────────────────────────────────────────┘ │ │ │
-│  │  └────────────────────────────────────────────────────────┘ │ │
-│  │                                                            │ │
-│  │  ┌──────────────────────────────────────────────────────┐ │ │
-│  │  │  Workload Pods (being monitored)                    │ │ │
-│  │  │  • nginx-xyz (network traffic traced)               │ │ │
-│  │  │  • pytorch-job (GPU usage monitored)                │ │ │
-│  │  └──────────────────────────────────────────────────────┘ │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                              │                                  │
-│                              │ gRPC                             │
-│  ┌───────────────────────────▼──────────────────────────────┐  │
-│  │          orb8-server (Central Control Plane)             │  │
-│  │          • Cluster-wide aggregation                      │  │
-│  │          • gRPC API :8080                                │  │
-│  │          • Query routing to nodes                        │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              │ gRPC
-                              ▼
-                    ┌──────────────────┐
-                    │   orb8 CLI       │
-                    │   (Developer)    │
-                    └──────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│                       Kubernetes Cluster                          │
+│                                                                   │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                          Node 1                             │  │
+│  │                                                             │  │
+│  │  ┌───────────────────────────────────────────────────────┐  │  │
+│  │  │               orb8-agent DaemonSet Pod                │  │  │
+│  │  │                                                       │  │  │
+│  │  │  ┌─────────────────────────────────────────────────┐  │  │  │
+│  │  │  │  KERNEL SPACE                                   │  │  │  │
+│  │  │  │                                                 │  │  │  │
+│  │  │  │  eBPF Probes (Rust):                            │  │  │  │
+│  │  │  │    network_probe (tc hook)                      │  │  │  │
+│  │  │  │    syscall_probe (tracepoint)                   │  │  │  │
+│  │  │  │    gpu_probe (kprobe/uprobe)                    │  │  │  │
+│  │  │  │                                                 │  │  │  │
+│  │  │  │  eBPF Maps (shared kernel/user memory):         │  │  │  │
+│  │  │  │    FLOW_EVENTS (ring buffer)                    │  │  │  │
+│  │  │  │    SYSCALL_EVENTS (ring buffer)                 │  │  │  │
+│  │  │  │    GPU_EVENTS (ring buffer)                     │  │  │  │
+│  │  │  │    POD_METADATA (hashmap)                       │  │  │  │
+│  │  │  └─────────────────────────────────────────────────┘  │  │  │
+│  │  │                          ║                            │  │  │
+│  │  │                          ║ (ring buffers)             │  │  │
+│  │  │                          ▼                            │  │  │
+│  │  │  ┌─────────────────────────────────────────────────┐  │  │  │
+│  │  │  │  USER SPACE (Rust)                              │  │  │  │
+│  │  │  │                                                 │  │  │  │
+│  │  │  │  Probe Loader (aya)                             │  │  │  │
+│  │  │  │  Event Collector (ring buffer reader)           │  │  │  │
+│  │  │  │  Pod Metadata Manager (K8s watcher)             │  │  │  │
+│  │  │  │  Metrics Aggregator (time-series)               │  │  │  │
+│  │  │  │  Agent gRPC Server :9090                        │  │  │  │
+│  │  │  │  Prometheus Exporter :9091/metrics              │  │  │  │
+│  │  │  └─────────────────────────────────────────────────┘  │  │  │
+│  │  └───────────────────────────────────────────────────────┘  │  │
+│  │                                                             │  │
+│  │  ┌───────────────────────────────────────────────────────┐  │  │
+│  │  │  Workload Pods (being monitored)                      │  │  │
+│  │  │    nginx-xyz (network traffic traced)                 │  │  │
+│  │  │    pytorch-job (GPU usage monitored)                  │  │  │
+│  │  └───────────────────────────────────────────────────────┘  │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                               │                                   │
+│                               │ gRPC                              │
+│  ┌────────────────────────────▼────────────────────────────────┐  │
+│  │  orb8-server (Central Control Plane)                        │  │
+│  │    Cluster-wide aggregation                                 │  │
+│  │    gRPC API :8080                                           │  │
+│  │    Query routing to nodes                                   │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────────────┘
+                                │
+                                │ gRPC
+                                ▼
+                      ┌──────────────────┐
+                      │    orb8 CLI      │
+                      │   (Developer)    │
+                      └──────────────────┘
 ```
 
 ---
 
 ## Monorepo Structure
 
-orb8 is organized as a **Cargo workspace** with multiple crates:
+orb8 is organized as a **Cargo workspace** with multiple crates.
+
+> **Note**: The structure below shows the **target architecture**. See the "Current Implementation Status" section at the end of this document for what is actually implemented in each phase.
 
 ```
 orb8/
@@ -498,82 +500,88 @@ orb8 supports multiple container runtimes with different cgroup path formats:
 
 ## GPU Telemetry Design
 
-GPU monitoring is orb8's **key differentiator**. We evaluate three approaches:
+GPU monitoring is a focus area for AI/ML workloads. This section documents the approach for per-pod GPU telemetry.
 
-### Option A: DCGM Integration (Recommended for MVP)
+### Industry Landscape
 
-**Approach**: Integrate with NVIDIA Data Center GPU Manager
+**Standard tools:**
+- [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html) - Kubernetes operator bundling drivers, device plugin, and dcgm-exporter
+- [dcgm-exporter](https://github.com/NVIDIA/dcgm-exporter) - Prometheus exporter using NVIDIA DCGM (Data Center GPU Manager)
+- [Coroot](https://coroot.com/blog/working-with-gpus-on-kubernetes-and-making-them-observable/) - Uses NVML directly with zero instrumentation
+
+**The per-pod attribution challenge:**
+
+GPU metrics are naturally node-level (GPUs don't know about containers). Mapping GPU usage to specific pods requires either:
+1. **Device plugin allocation tracking** - Query kubelet's pod-resources API (`/var/lib/kubelet/pod-resources`) for GPU device allocations, then match GPU UUIDs to pods
+2. **Process-to-container mapping** - Use NVML's per-process metrics and map PIDs to containers via cgroup
+
+| Tool | Approach | Per-Pod Attribution | Notes |
+|------|----------|---------------------|-------|
+| dcgm-exporter | DCGM daemon | Via kubelet pod-resources API | Industry standard, part of GPU Operator |
+| Coroot | NVML direct | PID-to-container mapping | Zero-instrumentation, lightweight |
+| eBPF (uprobes) | CUDA library tracing | Via cgroup ID | Can trace API calls, not GPU internals |
+
+### DCGM Integration (Recommended for MVP)
+
+Deploy [dcgm-exporter](https://github.com/NVIDIA/dcgm-exporter) as a sidecar and scrape its Prometheus metrics. Per-pod attribution via device plugin allocations.
 
 **Architecture**:
 ```
-┌─────────────────────────────────────────┐
-│          orb8-agent Pod                 │
-│                                         │
-│  ┌─────────────────────────────────┐   │
-│  │  DCGM Sidecar Container         │   │
-│  │  • Runs dcgm-exporter           │   │
-│  │  • Exposes metrics on :9400     │   │
-│  └─────────────────────────────────┘   │
-│                                         │
-│  ┌─────────────────────────────────┐   │
-│  │  orb8-agent Container           │   │
-│  │  • Scrapes localhost:9400       │   │
-│  │  • Correlates GPU → Pod         │   │
-│  │  • Enriches with K8s metadata   │   │
-│  └─────────────────────────────────┘   │
-└─────────────────────────────────────────┘
+┌───────────────────────────────────────────┐
+│  orb8-agent Pod                           │
+│                                           │
+│  ┌─────────────────────────────────────┐  │
+│  │  DCGM Sidecar Container             │  │
+│  │    Runs dcgm-exporter               │  │
+│  │    Exposes metrics on :9400         │  │
+│  └─────────────────────────────────────┘  │
+│                                           │
+│  ┌─────────────────────────────────────┐  │
+│  │  orb8-agent Container               │  │
+│  │    Scrapes localhost:9400           │  │
+│  │    Correlates GPU → Pod             │  │
+│  │    Enriches with K8s metadata       │  │
+│  └─────────────────────────────────────┘  │
+└───────────────────────────────────────────┘
 ```
 
-**Implementation**: Scrape DCGM exporter metrics, correlate GPU device IDs with pods via Kubernetes device plugin allocations.
+**Pros:** Production-proven, comprehensive metrics (utilization, memory, temperature, power), handles MIG partitioning
 
-**Advantages**: Production-ready, comprehensive metrics, no kernel module required
-
-**Disadvantages**: Requires DCGM installation, polling-based (1-10s granularity), no per-kernel tracing
-
-**Decision**: Use for MVP due to low implementation risk.
+**Cons:** Requires DCGM installation, polling-based (1-10s granularity)
 
 ---
 
-### Option B: NVML Direct Integration
+### NVML Direct Integration
 
-**Approach**: Use NVIDIA Management Library (NVML) directly from agent for polling GPU metrics
+Use [NVML](https://developer.nvidia.com/nvidia-management-library-nvml) (libnvidia-ml.so) directly from the agent, similar to nvidia-smi and Coroot.
 
-**Advantages**: No DCGM dependency, direct control, lightweight
+**Pros:** No DCGM dependency, lighter weight, direct control over polling
 
-**Disadvantages**: Still polling-based, requires NVML library, similar functionality to DCGM
-
-**Decision**: Alternative to DCGM if licensing/deployment constraints exist.
+**Cons:** Lower-level API, must implement per-pod attribution ourselves
 
 ---
 
-### Option C: eBPF Hooks into GPU Driver (Future Research)
+### eBPF-Based GPU Tracing (Future Research)
 
-**Approach**: Use kprobes/uprobes to intercept NVIDIA driver/runtime calls (CUDA Runtime API, CUDA Driver API, nvidia_ioctl)
+Two sub-approaches under active research:
 
-**Advantages**: Event-driven, per-kernel granularity, potential for advanced leak detection
+**CPU-side tracing:** Attach uprobes to CUDA libraries (libcuda.so, libcudart.so) to trace API calls like cudaMalloc, cudaLaunch, cudaMemcpy. Provides call-level visibility but cannot observe GPU-internal execution.
 
-**Disadvantages**: Extremely fragile (breaks on driver updates), requires reverse engineering, may violate EULA, high development cost
+**GPU-side eBPF:** Academic research ([eGPU](https://dl.acm.org/doi/10.1145/3723851.3726984)) explores running eBPF bytecode on the GPU itself for memory access tracing. Not production-ready.
 
-**Decision**: Defer to research spike. Start with DCGM integration and revisit if demand exists for kernel-level tracing.
+**Pros:** Event-driven (not polling), potential for CUDA kernel-level insights
+
+**Cons:** Experimental, may break on driver updates, limited to CUDA workloads
 
 ---
 
-### Recommended GPU Strategy
+### Recommended Strategy
 
-**Phase 1 (MVP)**: DCGM Integration
-- Scrape DCGM metrics
-- Correlate with pod metadata
-- Provide per-pod GPU utilization and memory
-- Good enough for 90% of use cases
-
-**Phase 2 (Enhancement)**: NVML Direct
-- Option to bypass DCGM for lighter deployment
-- Configurable polling intervals
-
-**Phase 3 (Research)**: eBPF Driver Hooks
-- Feasibility study
-- Prototype with specific driver versions
-- Evaluate maintenance burden vs. value
+| Phase | Approach | Rationale |
+|-------|----------|-----------|
+| MVP | DCGM Integration | Production-proven, covers 90% of use cases |
+| Enhancement | NVML Direct | Lighter deployment for environments without DCGM |
+| Research | eBPF uprobes on CUDA | Deeper observability for advanced users |
 
 ---
 
@@ -613,42 +621,42 @@ GPU monitoring is orb8's **key differentiator**. We evaluate three approaches:
 ### Memory Layout
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│                    KERNEL SPACE                            │
-│                                                            │
-│  eBPF Probes (.text section, read-only)                   │
-│  ┌──────────────────────────────────────────────────────┐ │
-│  │ network_probe.o:  ~8KB compiled bytecode             │ │
-│  │ syscall_probe.o:  ~4KB compiled bytecode             │ │
-│  │ gpu_probe.o:      ~4KB compiled bytecode             │ │
-│  └──────────────────────────────────────────────────────┘ │
-│                                                            │
-│  eBPF Maps (kernel heap, accessible from user space)      │
-│  ┌──────────────────────────────────────────────────────┐ │
-│  │ FLOW_EVENTS:       RingBuf, 1MB                      │ │
-│  │ SYSCALL_EVENTS:    RingBuf, 512KB                    │ │
-│  │ GPU_EVENTS:        RingBuf, 512KB                    │ │
-│  │ POD_METADATA:      HashMap, max 10k entries          │ │
-│  │ CONFIG:            HashMap, ~1KB                     │ │
-│  └──────────────────────────────────────────────────────┘ │
-│                                                            │
-│  Total kernel memory: ~2.5MB per node                     │
-└────────────────────────────────────────────────────────────┘
-         ║
-         ║ (ring buffers mmap'd into user space)
-         ▼
-┌────────────────────────────────────────────────────────────┐
-│                    USER SPACE                              │
-│                                                            │
-│  orb8-agent process: ~50-100MB RSS                        │
-│  ┌──────────────────────────────────────────────────────┐ │
-│  │ aya library:        manages eBPF lifecycle           │ │
-│  │ Event buffers:      ring buffer readers              │ │
-│  │ Aggregator cache:   last 5 min of metrics (~10MB)    │ │
-│  │ gRPC server:        tokio runtime                    │ │
-│  │ K8s client:         kube-rs API cache                │ │
-│  └──────────────────────────────────────────────────────┘ │
-└────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  KERNEL SPACE                                                │
+│                                                              │
+│  eBPF Probes (.text section, read-only)                      │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │  network_probe.o:  ~8KB compiled bytecode              │  │
+│  │  syscall_probe.o:  ~4KB compiled bytecode              │  │
+│  │  gpu_probe.o:      ~4KB compiled bytecode              │  │
+│  └────────────────────────────────────────────────────────┘  │
+│                                                              │
+│  eBPF Maps (kernel heap, accessible from user space)         │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │  FLOW_EVENTS:       RingBuf, 1MB                       │  │
+│  │  SYSCALL_EVENTS:    RingBuf, 512KB                     │  │
+│  │  GPU_EVENTS:        RingBuf, 512KB                     │  │
+│  │  POD_METADATA:      HashMap, max 10k entries           │  │
+│  │  CONFIG:            HashMap, ~1KB                      │  │
+│  └────────────────────────────────────────────────────────┘  │
+│                                                              │
+│  Total kernel memory: ~2.5MB per node                        │
+└──────────────────────────────────────────────────────────────┘
+                             ║
+                             ║ (ring buffers mmap'd into user space)
+                             ▼
+┌──────────────────────────────────────────────────────────────┐
+│  USER SPACE                                                  │
+│                                                              │
+│  orb8-agent process: ~50-100MB RSS                           │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │  aya library:        manages eBPF lifecycle            │  │
+│  │  Event buffers:      ring buffer readers               │  │
+│  │  Aggregator cache:   last 5 min of metrics (~10MB)     │  │
+│  │  gRPC server:        tokio runtime                     │  │
+│  │  K8s client:         kube-rs API cache                 │  │
+│  └────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -1125,6 +1133,46 @@ For high-traffic production clusters (>10Gbps per node):
 
 ---
 
+## Current Implementation Status
+
+This section documents what is actually implemented as of Phase 1 completion.
+
+### Implemented Components
+
+| Component | Status | Files Implemented |
+|-----------|--------|-------------------|
+| `orb8-probes` | Phase 1 | `src/network_probe.rs` (63 lines) - TC classifier with ring buffer |
+| `orb8-common` | Phase 1 | `src/lib.rs` (29 lines) - `PacketEvent` struct only |
+| `orb8-agent` | Phase 1 | `src/main.rs`, `src/lib.rs`, `src/probe_loader.rs` (277 lines total) |
+| `orb8-server` | Stub | `src/lib.rs` (9 lines) - placeholder |
+| `orb8-cli` | Stub | `src/main.rs`, `src/lib.rs` (13 lines) - placeholder |
+| `orb8-proto` | Stub | `src/lib.rs` (8 lines) - placeholder |
+
+### Phase Completion
+
+- **Phase 0** (Foundation): Complete
+- **Phase 1.1-1.4** (eBPF Infrastructure): Complete
+  - eBPF probe compilation with aya-bpf
+  - Probe loading and lifecycle management
+  - Ring buffer kernel-to-userspace communication
+  - Pre-flight system checks (kernel version, BTF, capabilities)
+- **Phase 1.5** (Testing): Pending
+- **Phase 2+**: Not started
+
+### What's Not Yet Implemented
+
+The following components exist in the target architecture but are not yet implemented:
+
+- `orb8-probes/src/syscall_probe.rs` (Phase 6)
+- `orb8-probes/src/gpu_probe.rs` (Phase 7)
+- `orb8-common/src/events.rs`, `types.rs` (to be split from lib.rs)
+- `orb8-agent/src/collector.rs`, `enricher.rs`, `aggregator.rs`, `api_server.rs`, `prom_exporter.rs`, `k8s/*` (Phases 2-5)
+- `orb8-server` full implementation (Phase 4)
+- `orb8-cli` commands (Phase 3+)
+- `orb8-proto` gRPC definitions (Phase 4)
+
+---
+
 ## References
 
 - [eBPF Documentation](https://ebpf.io/)
@@ -1137,6 +1185,6 @@ For high-traffic production clusters (>10Gbps per node):
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: 2025-11-27
+**Document Version**: 1.1
+**Last Updated**: 2025-11-30
 **Authors**: orb8 maintainers
