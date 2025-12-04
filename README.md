@@ -32,13 +32,17 @@ Existing Kubernetes observability tools either focus on high-level metrics or se
 
 ## Features
 
-### Current (In Development)
+### Current (v0.0.2)
 
-- **Network Flow Tracking**: Real-time TCP/UDP/DNS flow monitoring per container (v0.1.0 - Phase 3)
-- **System Call Monitoring**: Security anomaly detection via syscall pattern analysis (v0.3.0 - Phase 6)
+- **Network Flow Tracking**: TCP/UDP/ICMP flow monitoring with 5-tuple extraction
+- **gRPC API**: Agent exposes QueryFlows, StreamEvents, GetStatus on port 9090
+- **K8s Pod Enrichment**: Maps network events to pods via Kubernetes API
+- **Flow Aggregation**: 5-tuple flow aggregation with 30-second expiration
+- **Ring Buffer**: Efficient kernel-to-userspace event communication
 
 ### Planned
 
+- **System Call Monitoring**: Security anomaly detection via syscall pattern analysis (v0.3.0 - Phase 6)
 - **GPU Telemetry** (v0.4.0 - Phase 7):
   - GPU utilization tracking per pod (via DCGM)
   - GPU memory usage monitoring
@@ -90,7 +94,25 @@ kubectl apply -f deploy/orb8-daemonset.yaml
 
 ## Quick Start
 
-**Note**: orb8 is currently in Phase 1 (eBPF Infrastructure). Ring buffer communication is functional, and testing infrastructure (Phase 1.5) is pending.
+**Note**: orb8 v0.0.2 includes working network flow capture and gRPC API. The agent can be tested in the Lima VM.
+
+### Testing the Agent (v0.0.2)
+
+```bash
+# Start the agent in Lima VM
+make run-agent
+
+# In another terminal, query agent status
+grpcurl -plaintext -proto orb8-proto/proto/orb8.proto \
+  localhost:9090 orb8.v1.OrbitAgentService/GetStatus
+
+# Generate network traffic
+ping -c 5 127.0.0.1
+
+# Query captured flows
+grpcurl -plaintext -proto orb8-proto/proto/orb8.proto \
+  localhost:9090 orb8.v1.OrbitAgentService/QueryFlows
+```
 
 ### Network Monitoring (Coming in v0.1.0)
 
@@ -216,14 +238,15 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed design documentati
 
 See [ROADMAP.md](ROADMAP.md) for the full development plan.
 
-**Current Status**: Phase 1 (eBPF Infrastructure)
+**Current Status**: Phase 2 Complete, Phase 3 In Progress
 
 Completed:
 - Phase 0: Foundation & Monorepo Setup
-- Phase 1.1-1.4: eBPF probe loading, ring buffer communication
+- Phase 1: eBPF Infrastructure (probe loading, ring buffer)
+- Phase 2: Container Identification (K8s pod enrichment, gRPC API)
 
 In Progress:
-- Phase 1.5: Testing infrastructure
+- Phase 3: Network Tracing MVP (CLI commands, public release)
 
 Planned:
 - v0.1.0: Network Tracing MVP (Phase 3)

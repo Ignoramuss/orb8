@@ -1,6 +1,6 @@
 [package]
 name = "orb8-common"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 license = "Apache-2.0"
 description = "Shared types between eBPF and userspace for orb8"
