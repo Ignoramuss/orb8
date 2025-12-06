@@ -78,6 +78,16 @@ Existing Kubernetes observability tools either focus on high-level metrics or se
 **Future Features:**
 - CUDA 11.0+ (for GPU telemetry, v0.8.0+)
 
+### From crates.io (Recommended)
+
+```bash
+# Install the CLI
+cargo install orb8-cli
+
+# Install the agent (requires Linux with eBPF support)
+cargo install orb8-agent
+```
+
 ### From Source
 
 ```bash
@@ -94,33 +104,66 @@ kubectl apply -f deploy/orb8-daemonset.yaml
 
 ## Quick Start
 
-**Note**: orb8 v0.0.2 includes working network flow capture and gRPC API. The agent can be tested in the Lima VM.
+**Note**: orb8 v0.0.2 includes working network flow capture, CLI, and gRPC API.
 
-### Testing the Agent (v0.0.2)
+### Using the CLI (v0.0.2)
+
+```bash
+# Start the agent (requires Linux with eBPF support, or use Lima VM on macOS)
+orb8-agent
+
+# In another terminal, use the CLI to interact with the agent:
+
+# Check agent status
+orb8 status
+# Output:
+# Agent Status
+# ----------------------------------------
+# Node:             your-hostname
+# Version:          0.0.2
+# Health:           OK
+# Events Processed: 150
+# Active Flows:     3
+
+# Generate some network traffic
+ping -c 5 127.0.0.1
+
+# Query aggregated flows
+orb8 flows
+# Output:
+# NAMESPACE/POD        PROTOCOL    SOURCE            DESTINATION      DIR     BYTES  PACKETS
+# unknown/cgroup-0     ICMP   127.0.0.1:0       127.0.0.1:0    ingress    588B        6
+
+# Stream live network events
+orb8 trace network --duration 30s
+# Output:
+# Streaming network events from localhost:9090...
+# NAMESPACE/POD        PROTOCOL    SOURCE            DESTINATION      DIR     BYTES     TIME
+# unknown/cgroup-0     ICMP   127.0.0.1:0       127.0.0.1:0    ingress     98B  14:30:45
+```
+
+### Testing with gRPC (Alternative)
 
 ```bash
 # Start the agent in Lima VM
 make run-agent
 
-# In another terminal, query agent status
+# Query agent status via gRPC
 grpcurl -plaintext -proto orb8-proto/proto/orb8.proto \
   localhost:9090 orb8.v1.OrbitAgentService/GetStatus
 
-# Generate network traffic
-ping -c 5 127.0.0.1
-
-# Query captured flows
+# Query captured flows via gRPC
 grpcurl -plaintext -proto orb8-proto/proto/orb8.proto \
   localhost:9090 orb8.v1.OrbitAgentService/QueryFlows
 ```
 
-### Network Monitoring (Coming in v0.1.0)
+### Network Monitoring (Enhanced in v0.1.0)
 
 ```bash
-# Monitor network flows for all pods in a namespace
+# Monitor network flows for all pods in a namespace (coming)
 orb8 trace network --namespace default
 
-# Track DNS queries across the cluster
+# Track DNS queries across the cluster (coming)
 orb8 trace dns --all-namespaces
 ```
 
