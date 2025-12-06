@@ -32,13 +32,17 @@ Existing Kubernetes observability tools either focus on high-level metrics or se
 
 ## Features
 
-### Current (In Development)
+### Current (v0.0.2)
 
-- **Network Flow Tracking**: Real-time TCP/UDP/DNS flow monitoring per container (v0.1.0 - Phase 3)
-- **System Call Monitoring**: Security anomaly detection via syscall pattern analysis (v0.3.0 - Phase 6)
+- **Network Flow Tracking**: TCP/UDP/ICMP flow monitoring with 5-tuple extraction
+- **gRPC API**: Agent exposes QueryFlows, StreamEvents, GetStatus on port 9090
+- **K8s Pod Enrichment**: Maps network events to pods via Kubernetes API
+- **Flow Aggregation**: 5-tuple flow aggregation with 30-second expiration
+- **Ring Buffer**: Efficient kernel-to-userspace event communication
 
 ### Planned
 
+- **System Call Monitoring**: Security anomaly detection via syscall pattern analysis (v0.3.0 - Phase 6)
 - **GPU Telemetry** (v0.4.0 - Phase 7):
   - GPU utilization tracking per pod (via DCGM)
   - GPU memory usage monitoring
@@ -74,6 +78,16 @@ Existing Kubernetes observability tools either focus on high-level metrics or se
 **Future Features:**
 - CUDA 11.0+ (for GPU telemetry, v0.8.0+)
 
+### From crates.io (Recommended)
+
+```bash
+# Install the CLI
+cargo install orb8-cli
+
+# Install the agent (requires Linux with eBPF support)
+cargo install orb8-agent
+```
+
 ### From Source
 
 ```bash
@@ -90,15 +104,66 @@ kubectl apply -f deploy/orb8-daemonset.yaml
 
 ## Quick Start
 
-**Note**: orb8 is currently in Phase 1 (eBPF Infrastructure). Ring buffer communication is functional, and testing infrastructure (Phase 1.5) is pending.
+**Note**: orb8 v0.0.2 includes working network flow capture, CLI, and gRPC API.
 
-### Network Monitoring (Coming in v0.1.0)
+### Using the CLI (v0.0.2)
 
 ```bash
-# Monitor network flows for all pods in a namespace
+# Start the agent (requires Linux with eBPF support, or use Lima VM on macOS)
+orb8-agent
+
+# In another terminal, use the CLI to interact with the agent:
+
+# Check agent status
+orb8 status
+# Output:
+# Agent Status
+# ----------------------------------------
+# Node:             your-hostname
+# Version:          0.0.2
+# Health:           OK
+# Events Processed: 150
+# Active Flows:     3
+
+# Generate some network traffic
+ping -c 5 127.0.0.1
+
+# Query aggregated flows
+orb8 flows
+# Output:
+# NAMESPACE/POD        PROTOCOL    SOURCE            DESTINATION      DIR     BYTES  PACKETS
+# unknown/cgroup-0     ICMP   127.0.0.1:0       127.0.0.1:0    ingress    588B        6
+
+# Stream live network events
+orb8 trace network --duration 30s
+# Output:
+# Streaming network events from localhost:9090...
+# NAMESPACE/POD        PROTOCOL    SOURCE            DESTINATION      DIR     BYTES     TIME
+# unknown/cgroup-0     ICMP   127.0.0.1:0       127.0.0.1:0    ingress     98B  14:30:45
+```
+
+### Testing with gRPC (Alternative)
+
+```bash
+# Start the agent in Lima VM
+make run-agent
+
+# Query agent status via gRPC
+grpcurl -plaintext -proto orb8-proto/proto/orb8.proto \
+  localhost:9090 orb8.v1.OrbitAgentService/GetStatus
+
+# Query captured flows via gRPC
+grpcurl -plaintext -proto orb8-proto/proto/orb8.proto \
+  localhost:9090 orb8.v1.OrbitAgentService/QueryFlows
+```
+
+### Network Monitoring (Enhanced in v0.1.0)
+
+```bash
+# Monitor network flows for all pods in a namespace (coming)
 orb8 trace network --namespace default
 
-# Track DNS queries across the cluster
+# Track DNS queries across the cluster (coming)
 orb8 trace dns --all-namespaces
 ```
 
@@ -216,14 +281,15 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed design documentati
 
 See [ROADMAP.md](ROADMAP.md) for the full development plan.
 
-**Current Status**: Phase 1 (eBPF Infrastructure)
+**Current Status**: Phase 2 Complete, Phase 3 In Progress
 
 Completed:
 - Phase 0: Foundation & Monorepo Setup
-- Phase 1.1-1.4: eBPF probe loading, ring buffer communication
+- Phase 1: eBPF Infrastructure (probe loading, ring buffer)
+- Phase 2: Container Identification (K8s pod enrichment, gRPC API)
 
 In Progress:
-- Phase 1.5: Testing infrastructure
+- Phase 3: Network Tracing MVP (CLI commands, public release)
 
 Planned:
 - v0.1.0: Network Tracing MVP (Phase 3)

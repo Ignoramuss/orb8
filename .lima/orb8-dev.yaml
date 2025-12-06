@@ -43,7 +43,8 @@ provision:
         libssl-dev \
         vim \
         less \
-        jq
+        jq \
+        protobuf-compiler
 
       # Install eBPF tools and LLVM
       apt-get install -y \
@@ -68,10 +69,11 @@ provision:
       curl -fsSL https://get.docker.com | sh
       usermod -aG docker {{.User}}
 
-      # Install minikube
-      curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-      install minikube-linux-amd64 /usr/local/bin/minikube
-      rm minikube-linux-amd64
+      # Install minikube (detect arch)
+      ARCH=$(dpkg --print-architecture)
+      curl -LO "https://storage.googleapis.com/minikube/releases/latest/minikube-linux-${ARCH}"
+      install "minikube-linux-${ARCH}" /usr/local/bin/minikube
+      rm "minikube-linux-${ARCH}"
 
   - mode: user
     script: |
@@ -115,6 +117,7 @@ message: |
   - bpf-linker (eBPF linker for Rust)
   - cargo-generate (project scaffolding)
   - eBPF tools (LLVM 14, clang, libbpf, bpftool)
+  - protobuf-compiler (for gRPC proto compilation)
   - kubectl
   - minikube
   - Docker

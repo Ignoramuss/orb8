@@ -189,7 +189,7 @@ cargo publish -p orb8
 
 **Dependencies**: Phase 0
 
-**Estimated Effort**: 2-3 weeks of focused development
+**Status**: ✅ COMPLETE
 
 ### Tasks
 
@@ -422,7 +422,10 @@ fn test_probe_lifecycle() {
 
 **Dependencies**: Phase 1
 
-**Estimated Effort**: 1-2 weeks
+**Status**: ✅ COMPLETE (MVP implementation)
+
+> **Note**: `bpf_get_current_cgroup_id()` is not available for TC classifiers on some kernels (5.15).
+> MVP uses K8s API-based pod enrichment with cgroup_id=0 fallback.
 
 ### Tasks
 
@@ -2031,12 +2034,17 @@ This roadmap provides a **phase-based, dependency-driven** implementation plan f
 - ✅ Technical debt explicitly managed
 - ✅ Research spikes for high-uncertainty areas
 
-**Current Status**: Phase 1 in progress (1.1-1.4 complete, 1.5 pending)
+**Current Status**: Phase 2 complete. Phase 3 in progress.
 
-**Next Step**: Phase 1.5 (Testing Infrastructure)
+**Completed**:
+- Phase 0: Foundation & Monorepo
+- Phase 1: eBPF Infrastructure (probe loading, ring buffer, event polling)
+- Phase 2: Container Identification (K8s watcher, pod cache, gRPC API)
+
+**Next Step**: Phase 3 (Network Tracing MVP public release)
 
 ---
 
-**Document Version**: 1.2
-**Last Updated**: 2025-11-30
+**Document Version**: 1.3
+**Last Updated**: 2025-12-04
 **Authors**: orb8 maintainers

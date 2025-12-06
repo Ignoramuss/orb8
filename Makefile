@@ -58,13 +58,13 @@ build:
 	@limactl shell orb8-dev bash -c "cd $(shell pwd) && cargo build --release"
 
 install:
-	@echo "Installing orb8 to ~/.cargo/bin/..."
-	@limactl shell orb8-dev bash -c "cd $(shell pwd) && cargo install --path ."
+	@echo "Installing orb8-cli and orb8-agent to ~/.cargo/bin/..."
+	@limactl shell orb8-dev bash -c "cd $(shell pwd) && cargo install --path orb8-cli && cargo install --path orb8-agent"
 	@echo "Installation complete. Run 'orb8 --help' to verify."
 
 uninstall:
-	@echo "Uninstalling orb8..."
-	@limactl shell orb8-dev bash -c "cargo uninstall orb8"
+	@echo "Uninstalling orb8-cli and orb8-agent..."
+	@limactl shell orb8-dev bash -c "cargo uninstall orb8-cli orb8-agent"
 	@echo "orb8 has been uninstalled"
 
 # Local commands (work directly on current OS, no VM)
@@ -77,8 +77,9 @@ test-local:
 	@cargo test
 
 install-local:
-	@echo "Installing orb8 locally to ~/.cargo/bin/..."
-	@cargo install --path .
+	@echo "Installing orb8-cli and orb8-agent locally to ~/.cargo/bin/..."
+	@cargo install --path orb8-cli
+	@cargo install --path orb8-agent
 	@echo "Installation complete. Run 'orb8 --help' to verify."
 
 magic-local: build-local test-local install-local
@@ -94,7 +95,7 @@ magic: magic-local
 else
 magic: dev
 	@echo "Building, testing, and installing orb8..."
-	@limactl shell orb8-dev bash -c "cd $(shell pwd) && cargo build --release && cargo test && cargo install --path ."
+	@limactl shell orb8-dev bash -c "cd $(shell pwd) && cargo build --release && cargo test && cargo install --path orb8-cli && cargo install --path orb8-agent"
 	@echo ""
 	@echo "Build, test, and install complete!"
 	@echo "Inside the VM, orb8 is now available in your PATH."
