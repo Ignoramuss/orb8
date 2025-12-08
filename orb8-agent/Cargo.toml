@@ -27,7 +27,7 @@ kube = { version = "0.98", features = ["runtime", "client"] }
 k8s-openapi = { version = "0.24", features = ["latest"] }
 dashmap = "6.1"
 futures = "0.3"
-orb8-proto = { path = "../orb8-proto" }
+orb8-proto = { version = "0.0.2", path = "../orb8-proto" }
 tonic = "0.12"
 tokio-stream = { version = "0.1", features = ["sync"] }
 

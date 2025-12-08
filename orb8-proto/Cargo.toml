@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "gRPC protocol definitions for orb8"
 repository = "https://github.com/Ignoramuss/orb8"
 homepage = "https://github.com/Ignoramuss/orb8"
+documentation = "https://docs.rs/orb8-proto"
 readme = "../README.md"
 keywords = ["grpc", "protobuf", "ebpf", "observability"]
 categories = ["network-programming"]
