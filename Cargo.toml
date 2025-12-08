@@ -18,7 +18,7 @@ categories = ["command-line-utilities", "development-tools::profiling", "network
 tokio = { version = "1.35", features = ["full"] }
 
 # Kubernetes client
-kube = { version = "0.88", features = ["runtime", "derive"] }
+kube = { version = "2.0", features = ["runtime", "derive"] }
 k8s-openapi = { version = "0.21", features = ["latest"] }
 
 # CLI and TUI
