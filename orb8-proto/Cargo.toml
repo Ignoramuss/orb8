@@ -1,14 +1,23 @@
 [package]
 name = "orb8-proto"
-version = "0.0.0"
+version = "0.0.2"
 edition = "2021"
 license = "Apache-2.0"
 description = "gRPC protocol definitions for orb8"
+repository = "https://github.com/Ignoramuss/orb8"
+homepage = "https://github.com/Ignoramuss/orb8"
+documentation = "https://docs.rs/orb8-proto"
+readme = "../README.md"
+keywords = ["grpc", "protobuf", "ebpf", "observability"]
+categories = ["network-programming"]
 
 [dependencies]
-# gRPC dependencies will be added in Phase 4
-# tonic = "0.11"
-# prost = "0.12"
+tonic = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+
+[build-dependencies]
+tonic-build = "0.12"
 
 [lib]
 path = "src/lib.rs"

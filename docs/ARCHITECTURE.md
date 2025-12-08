@@ -1135,29 +1135,42 @@ For high-traffic production clusters (>10Gbps per node):
 
 ## Current Implementation Status
 
-This section documents what is actually implemented as of Phase 1 completion.
+This section documents what is actually implemented as of Phase 2 (v0.0.2).
 
 ### Implemented Components
 
 | Component | Status | Files Implemented |
 |-----------|--------|-------------------|
-| `orb8-probes` | Phase 1 | `src/network_probe.rs` (63 lines) - TC classifier with ring buffer |
-| `orb8-common` | Phase 1 | `src/lib.rs` (29 lines) - `PacketEvent` struct only |
-| `orb8-agent` | Phase 1 | `src/main.rs`, `src/lib.rs`, `src/probe_loader.rs` (277 lines total) |
-| `orb8-server` | Stub | `src/lib.rs` (9 lines) - placeholder |
-| `orb8-cli` | Stub | `src/main.rs`, `src/lib.rs` (13 lines) - placeholder |
-| `orb8-proto` | Stub | `src/lib.rs` (8 lines) - placeholder |
+| `orb8-probes` | Phase 2 | `src/network_probe.rs` - Full IPv4/TCP/UDP/ICMP packet parsing, ring buffer |
+| `orb8-common` | Phase 2 | `src/lib.rs` - `NetworkFlowEvent`, `PacketEvent`, protocol/direction constants |
+| `orb8-agent` | Phase 2 | `main.rs`, `lib.rs`, `probe_loader.rs`, `aggregator.rs`, `grpc_server.rs`, `k8s_watcher.rs`, `pod_cache.rs`, `cgroup.rs` |
+| `orb8-proto` | Phase 2 | `src/lib.rs`, `build.rs`, `proto/orb8.proto` - gRPC service definitions |
+| `orb8-server` | Stub | `src/lib.rs` - placeholder (Phase 4) |
+| `orb8-cli` | Phase 2 | `src/lib.rs`, `src/main.rs` - Basic structure |
 
 ### Phase Completion
 
-- **Phase 0** (Foundation): Complete
-- **Phase 1.1-1.4** (eBPF Infrastructure): Complete
+- **Phase 0** (Foundation): ✅ Complete
+- **Phase 1** (eBPF Infrastructure): ✅ Complete
   - eBPF probe compilation with aya-bpf
   - Probe loading and lifecycle management
   - Ring buffer kernel-to-userspace communication
   - Pre-flight system checks (kernel version, BTF, capabilities)
-- **Phase 1.5** (Testing): Pending
-- **Phase 2+**: Not started
+- **Phase 2** (Container Identification): ✅ Complete (MVP)
+  - Kubernetes pod watcher (kube-rs)
+  - Pod cache with cgroup ID mapping
+  - Event enrichment with pod metadata
+  - gRPC API server (port 9090)
+  - Flow aggregation with 30s expiration
+
+  > **Note**: `bpf_get_current_cgroup_id()` not available for TC classifiers.
+  > Using K8s API-based enrichment with cgroup_id=0 fallback.
+
+- **Phase 3** (Network MVP): 🔄 In Progress
+  - ✅ Full packet parsing (5-tuple extraction)
+  - ✅ gRPC QueryFlows, StreamEvents, GetStatus
+  - ⏳ CLI trace network command
+  - ⏳ Public release
 
 ### What's Not Yet Implemented
 
@@ -1165,11 +1178,9 @@ The following components exist in the target architecture but are not yet implem
 
 - `orb8-probes/src/syscall_probe.rs` (Phase 6)
 - `orb8-probes/src/gpu_probe.rs` (Phase 7)
-- `orb8-common/src/events.rs`, `types.rs` (to be split from lib.rs)
-- `orb8-agent/src/collector.rs`, `enricher.rs`, `aggregator.rs`, `api_server.rs`, `prom_exporter.rs`, `k8s/*` (Phases 2-5)
+- `orb8-agent/src/prom_exporter.rs` (Phase 5)
 - `orb8-server` full implementation (Phase 4)
-- `orb8-cli` commands (Phase 3+)
-- `orb8-proto` gRPC definitions (Phase 4)
+- `orb8-cli` full trace commands (Phase 3)
 
 ---
 
@@ -1185,6 +1196,6 @@ The following components exist in the target architecture but are not yet implem
 
 ---
 
-**Document Version**: 1.1
-**Last Updated**: 2025-11-30
+**Document Version**: 1.2
+**Last Updated**: 2025-12-04
 **Authors**: orb8 maintainers

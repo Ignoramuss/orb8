@@ -1,11 +1,12 @@
 [package]
 name = "orb8-cli"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 license = "Apache-2.0"
 description = "Command-line interface for orb8"
 repository = "https://github.com/Ignoramuss/orb8"
 homepage = "https://github.com/Ignoramuss/orb8"
+documentation = "https://docs.rs/orb8-cli"
 readme = "../README.md"
 keywords = ["ebpf", "observability", "kubernetes", "cli"]
 categories = ["command-line-utilities"]
@@ -14,6 +15,15 @@ categories = ["command-line-utilities"]
 clap = { version = "4.5", features = ["derive"] }
 anyhow = "1.0"
 thiserror = "2.0"
+tokio = { version = "1.41", features = ["full"] }
+tonic = "0.12"
+orb8-proto = { version = "0.0.2", path = "../orb8-proto" }
+futures = "0.3"
+chrono = "0.4"
 
 [lib]
 path = "src/lib.rs"
+
+[[bin]]
+name = "orb8"
+path = "src/main.rs"

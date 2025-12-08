@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package orb8.v1;
+
+// OrbitAgentService - Exposed by each agent on port 9090
+// CLI connects directly to agents for queries
+service OrbitAgentService {
+    // Query aggregated network flows
+    rpc QueryFlows(QueryFlowsRequest) returns (QueryFlowsResponse);
+
+    // Stream real-time network events
+    rpc StreamEvents(StreamEventsRequest) returns (stream NetworkEvent);
+
+    // Get agent status and health
+    rpc GetStatus(GetStatusRequest) returns (AgentStatus);
+}
+
+// Request to query aggregated network flows
+message QueryFlowsRequest {
+    // Filter by namespaces (empty = all)
+    repeated string namespaces = 1;
+    // Filter by pod names (empty = all)
+    repeated string pod_names = 2;
+    // Maximum number of flows to return
+    uint32 limit = 3;
+}
+
+// Response containing network flows
+message QueryFlowsResponse {
+    repeated NetworkFlow flows = 1;
+}
+
+// Aggregated network flow between endpoints
+message NetworkFlow {
+    string namespace = 1;
+    string pod_name = 2;
+    string src_ip = 3;
+    string dst_ip = 4;
+    uint32 src_port = 5;
+    uint32 dst_port = 6;
+    string protocol = 7;
+    string direction = 8;
+    uint64 bytes = 9;
+    uint64 packets = 10;
+    int64 first_seen_ns = 11;
+    int64 last_seen_ns = 12;
+}
+
+// Request to stream real-time events
+message StreamEventsRequest {
+    // Filter by namespaces (empty = all)
+    repeated string namespaces = 1;
+}
+
+// Individual network event
+message NetworkEvent {
+    string namespace = 1;
+    string pod_name = 2;
+    string src_ip = 3;
+    string dst_ip = 4;
+    uint32 src_port = 5;
+    uint32 dst_port = 6;
+    string protocol = 7;
+    string direction = 8;
+    uint32 bytes = 9;
+    int64 timestamp_ns = 10;
+}
+
+// Request for agent status
+message GetStatusRequest {}
+
+// Agent status and health information
+message AgentStatus {
+    string node_name = 1;
+    string version = 2;
+    bool healthy = 3;
+    string health_message = 4;
+    uint64 events_processed = 5;
+    uint64 events_dropped = 6;
+    uint32 pods_tracked = 7;
+    uint32 active_flows = 8;
+    int64 uptime_seconds = 9;
+}

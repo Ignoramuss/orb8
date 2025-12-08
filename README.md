@@ -32,13 +32,17 @@ Existing Kubernetes observability tools either focus on high-level metrics or se
 
 ## Features
 
-### Current (In Development)
+### Current (v0.0.2)
 
-- **Network Flow Tracking**: Real-time TCP/UDP/DNS flow monitoring per container (v0.1.0 - Phase 3)
-- **System Call Monitoring**: Security anomaly detection via syscall pattern analysis (v0.3.0 - Phase 6)
+- **Network Flow Tracking**: TCP/UDP/ICMP flow monitoring with 5-tuple extraction
+- **gRPC API**: Agent exposes QueryFlows, StreamEvents, GetStatus on port 9090
+- **K8s Pod Enrichment**: Maps network events to pods via Kubernetes API
+- **Flow Aggregation**: 5-tuple flow aggregation with 30-second expiration
+- **Ring Buffer**: Efficient kernel-to-userspace event communication
 
 ### Planned
 
+- **System Call Monitoring**: Security anomaly detection via syscall pattern analysis (v0.3.0 - Phase 6)
 - **GPU Telemetry** (v0.4.0 - Phase 7):
   - GPU utilization tracking per pod (via DCGM)
   - GPU memory usage monitoring
@@ -74,6 +78,16 @@ Existing Kubernetes observability tools either focus on high-level metrics or se
 **Future Features:**
 - CUDA 11.0+ (for GPU telemetry, v0.8.0+)
 
+### From crates.io (Recommended)
+
+```bash
+# Install the CLI
+cargo install orb8-cli
+
+# Install the agent (requires Linux with eBPF support)
+cargo install orb8-agent
+```
+
 ### From Source
 
 ```bash
@@ -90,15 +104,66 @@ kubectl apply -f deploy/orb8-daemonset.yaml
 
 ## Quick Start
 
-**Note**: orb8 is currently in Phase 1 (eBPF Infrastructure). Ring buffer communication is functional, and testing infrastructure (Phase 1.5) is pending.
+**Note**: orb8 v0.0.2 includes working network flow capture, CLI, and gRPC API.
 
-### Network Monitoring (Coming in v0.1.0)
+### Using the CLI (v0.0.2)
 
 ```bash
-# Monitor network flows for all pods in a namespace
+# Start the agent (requires Linux with eBPF support, or use Lima VM on macOS)
+orb8-agent
+
+# In another terminal, use the CLI to interact with the agent:
+
+# Check agent status
+orb8 status
+# Output:
+# Agent Status
+# ----------------------------------------
+# Node:             your-hostname
+# Version:          0.0.2
+# Health:           OK
+# Events Processed: 150
+# Active Flows:     3
+
+# Generate some network traffic
+ping -c 5 127.0.0.1
+
+# Query aggregated flows
+orb8 flows
+# Output:
+# NAMESPACE/POD        PROTOCOL    SOURCE            DESTINATION      DIR     BYTES  PACKETS
+# unknown/cgroup-0     ICMP   127.0.0.1:0       127.0.0.1:0    ingress    588B        6
+
+# Stream live network events
+orb8 trace network --duration 30s
+# Output:
+# Streaming network events from localhost:9090...
+# NAMESPACE/POD        PROTOCOL    SOURCE            DESTINATION      DIR     BYTES     TIME
+# unknown/cgroup-0     ICMP   127.0.0.1:0       127.0.0.1:0    ingress     98B  14:30:45
+```
+
+### Testing with gRPC (Alternative)
+
+```bash
+# Start the agent in Lima VM
+make run-agent
+
+# Query agent status via gRPC
+grpcurl -plaintext -proto orb8-proto/proto/orb8.proto \
+  localhost:9090 orb8.v1.OrbitAgentService/GetStatus
+
+# Query captured flows via gRPC
+grpcurl -plaintext -proto orb8-proto/proto/orb8.proto \
+  localhost:9090 orb8.v1.OrbitAgentService/QueryFlows
+```
+
+### Network Monitoring (Enhanced in v0.1.0)
+
+```bash
+# Monitor network flows for all pods in a namespace (coming)
 orb8 trace network --namespace default
 
-# Track DNS queries across the cluster
+# Track DNS queries across the cluster (coming)
 orb8 trace dns --all-namespaces
 ```
 
@@ -118,75 +183,67 @@ orb8 trace gpu --namespace ml-training
 
 ## Testing
 
-### Testing the eBPF Agent (Phase 1.2+)
+### Quick Test (v0.0.2)
 
-Phase 1.2 implements the "Hello World" eBPF probe with full probe loading.
-
-**What works:**
-- eBPF probe compiles to bytecode
-- Agent loads probe into kernel
-- Probe attaches to network interfaces (loopback)
-- eBPF logs are captured in userspace
-
-**Testing on macOS (via Lima VM):**
+**macOS:**
 ```bash
-# Build the agent (compiles eBPF probes automatically)
-make build-agent
+# Terminal 1: Start agent
+make dev          # First time only - creates VM (~5 min)
+make run-agent    # Starts agent with sudo
 
-# Run the agent (requires sudo, use Ctrl+C to stop)
-make run-agent
+# Terminal 2: Use CLI
+make shell
+orb8 status                        # Check agent health
+ping -c 5 127.0.0.1                # Generate traffic
+orb8 flows                         # View aggregated flows
+orb8 trace network --duration 10s  # Stream live events
 ```
 
-**Testing on Linux (native):**
+**Linux:**
 ```bash
-# Build the agent
-cargo build -p orb8-agent
+# Terminal 1: Start agent
+make run-agent    # Starts agent with sudo
 
-# Run the agent (requires root for eBPF)
-sudo ./target/debug/orb8-agent
+# Terminal 2: Use CLI
+orb8 status
+ping -c 5 127.0.0.1
+orb8 flows
+orb8 trace network --duration 10s
 ```
 
-**Verifying it works:**
-1. Start the agent with `make run-agent`
-2. In another terminal (inside VM if on macOS): `ping 127.0.0.1`
-3. You should see logs like:
-   ```
-   [INFO  network_probe] Hello from eBPF! packet_len=98
-   ```
-4. Press Ctrl+C to stop the agent
-
-### Linux Testing (Recommended: `make magic-local`)
-
-```bash
-# Verify your environment
-make verify-setup
-
-# Build, test, install (native, no VM)
-make magic-local
+**Expected output from `orb8 status`:**
+```
+Agent Status
+----------------------------------------
+Node:             your-hostname
+Version:          0.0.2
+Health:           OK
+Events Processed: 150
+Active Flows:     3
 ```
 
-**Why `magic-local`?** Direct and explicit. On Linux, `make magic` just redirects to `magic-local` anyway.
+### Running Tests
 
-### macOS Testing
-
-**For Phase 1.1 (build infrastructure only):**
 ```bash
-# Verify your environment
-make verify-setup
-
-# Quick testing without VM (recommended for Phase 1.1)
-make magic-local
+make test           # Run all tests
+make verify-setup   # Verify environment is configured correctly
 ```
 
-**For Phase 1.2+ (when testing actual eBPF execution):**
-```bash
-# Full testing with VM (can load eBPF into kernel)
-make magic
-```
+### Build Commands
 
-**What's the difference?**
-- `make magic-local`: Builds on macOS, compiles eBPF to bytecode (fast, no VM)
-- `make magic`: Uses Lima VM, can actually load eBPF programs (required for Phase 1.2+)
+| Command | Description |
+|---------|-------------|
+| `make magic` | Build, test, install (uses VM on macOS, native on Linux) |
+| `make magic-local` | Build, test, install (native, no VM) |
+| `make dev` | Setup Lima VM (macOS only) |
+| `make shell` | Enter Lima VM (macOS only) |
+| `make build` | Build all crates |
+| `make build-agent` | Build agent only |
+| `make run-agent` | Build and run agent with sudo |
+| `make test` | Run tests |
+| `make fmt` | Format code |
+| `make clippy` | Run linter |
+| `make clean` | Delete VM and cleanup |
 
 ## Architecture
 
@@ -216,14 +273,15 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed design documentati
 
 See [ROADMAP.md](ROADMAP.md) for the full development plan.
 
-**Current Status**: Phase 1 (eBPF Infrastructure)
+**Current Status**: Phase 2 Complete, Phase 3 In Progress
 
 Completed:
 - Phase 0: Foundation & Monorepo Setup
-- Phase 1.1-1.4: eBPF probe loading, ring buffer communication
+- Phase 1: eBPF Infrastructure (probe loading, ring buffer)
+- Phase 2: Container Identification (K8s pod enrichment, gRPC API)
 
 In Progress:
-- Phase 1.5: Testing infrastructure
+- Phase 3: Network Tracing MVP (CLI commands, public release)
 
 Planned:
 - v0.1.0: Network Tracing MVP (Phase 3)

@@ -1,6 +1,6 @@
 [package]
 name = "orb8"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 rust-version = "1.75"
 authors = ["Ignoramuss"]
@@ -8,7 +8,7 @@ license = "Apache-2.0"
 description = "eBPF-powered observability toolkit for Kubernetes with GPU telemetry"
 repository = "https://github.com/Ignoramuss/orb8"
 homepage = "https://github.com/Ignoramuss/orb8"
-documentation = "https://github.com/Ignoramuss/orb8/blob/main/README.md"
+documentation = "https://docs.rs/orb8"
 readme = "README.md"
 keywords = ["kubernetes", "ebpf", "observability", "gpu", "monitoring"]
 categories = ["command-line-utilities", "development-tools::profiling", "network-programming"]
@@ -48,8 +48,8 @@ bytes = "1.5"
 async-trait = "0.1"
 
 # Sub-crates (optional, re-exported)
-orb8-common = { version = "0.0.1", path = "orb8-common", optional = true }
-orb8-cli = { version = "0.0.1", path = "orb8-cli", optional = true }
+orb8-common = { version = "0.0.2", path = "orb8-common", optional = true }
+orb8-cli = { version = "0.0.2", path = "orb8-cli", optional = true }
 
 [features]
 default = ["common", "cli"]

@@ -7,7 +7,7 @@ use aya::{
     Ebpf,
 };
 use log::{info, warn};
-use orb8_common::PacketEvent;
+use orb8_common::NetworkFlowEvent;
 use std::mem;
 use std::path::Path;
 
@@ -80,7 +80,7 @@ impl ProbeManager {
 }
 
 /// Poll events from the ring buffer
-pub fn poll_events(ring_buf: &mut RingBuf<&mut aya::maps::MapData>) -> Vec<PacketEvent> {
+pub fn poll_events(ring_buf: &mut RingBuf<&mut aya::maps::MapData>) -> Vec<NetworkFlowEvent> {
     const MAX_BATCH_SIZE: usize = 1024;
     let mut events = Vec::new();
 
@@ -90,10 +90,10 @@ pub fn poll_events(ring_buf: &mut RingBuf<&mut aya::maps::MapData>) -> Vec<Packe
             break;
         }
 
-        let expected_size = mem::size_of::<PacketEvent>();
+        let expected_size = mem::size_of::<NetworkFlowEvent>();
         if item.len() == expected_size {
-            let event: PacketEvent =
-                unsafe { std::ptr::read_unaligned(item.as_ptr() as *const PacketEvent) };
+            let event: NetworkFlowEvent =
+                unsafe { std::ptr::read_unaligned(item.as_ptr() as *const NetworkFlowEvent) };
             events.push(event);
         } else {
             warn!(
