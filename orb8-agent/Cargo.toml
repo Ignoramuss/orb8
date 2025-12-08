@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "Node agent for orb8 (DaemonSet)"
 repository = "https://github.com/Ignoramuss/orb8"
 homepage = "https://github.com/Ignoramuss/orb8"
+documentation = "https://docs.rs/orb8-agent"
 readme = "../README.md"
 keywords = ["ebpf", "observability", "kubernetes", "agent", "daemonset"]
 categories = ["command-line-utilities", "development-tools::profiling"]

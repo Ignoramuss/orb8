@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "Command-line interface for orb8"
 repository = "https://github.com/Ignoramuss/orb8"
 homepage = "https://github.com/Ignoramuss/orb8"
+documentation = "https://docs.rs/orb8-cli"
 readme = "../README.md"
 keywords = ["ebpf", "observability", "kubernetes", "cli"]
 categories = ["command-line-utilities"]
