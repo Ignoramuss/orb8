@@ -183,75 +183,67 @@ orb8 trace gpu --namespace ml-training
 
 ## Testing
 
-### Testing the eBPF Agent (Phase 1.2+)
+### Quick Test (v0.0.2)
 
-Phase 1.2 implements the "Hello World" eBPF probe with full probe loading.
-
-**What works:**
-- eBPF probe compiles to bytecode
-- Agent loads probe into kernel
-- Probe attaches to network interfaces (loopback)
-- eBPF logs are captured in userspace
-
-**Testing on macOS (via Lima VM):**
+**macOS:**
 ```bash
-# Build the agent (compiles eBPF probes automatically)
-make build-agent
+# Terminal 1: Start agent
+make dev          # First time only - creates VM (~5 min)
+make run-agent    # Starts agent with sudo
 
-# Run the agent (requires sudo, use Ctrl+C to stop)
-make run-agent
+# Terminal 2: Use CLI
+make shell
+orb8 status                        # Check agent health
+ping -c 5 127.0.0.1                # Generate traffic
+orb8 flows                         # View aggregated flows
+orb8 trace network --duration 10s  # Stream live events
 ```
 
-**Testing on Linux (native):**
+**Linux:**
 ```bash
-# Build the agent
-cargo build -p orb8-agent
+# Terminal 1: Start agent
+make run-agent    # Starts agent with sudo
 
-# Run the agent (requires root for eBPF)
-sudo ./target/debug/orb8-agent
+# Terminal 2: Use CLI
+orb8 status
+ping -c 5 127.0.0.1
+orb8 flows
+orb8 trace network --duration 10s
 ```
 
-**Verifying it works:**
-1. Start the agent with `make run-agent`
-2. In another terminal (inside VM if on macOS): `ping 127.0.0.1`
-3. You should see logs like:
-   ```
-   [INFO  network_probe] Hello from eBPF! packet_len=98
-   ```
-4. Press Ctrl+C to stop the agent
-
-### Linux Testing (Recommended: `make magic-local`)
-
-```bash
-# Verify your environment
-make verify-setup
-
-# Build, test, install (native, no VM)
-make magic-local
+**Expected output from `orb8 status`:**
+```
+Agent Status
+----------------------------------------
+Node:             your-hostname
+Version:          0.0.2
+Health:           OK
+Events Processed: 150
+Active Flows:     3
 ```
 
-**Why `magic-local`?** Direct and explicit. On Linux, `make magic` just redirects to `magic-local` anyway.
+### Running Tests
 
-### macOS Testing
-
-**For Phase 1.1 (build infrastructure only):**
 ```bash
-# Verify your environment
-make verify-setup
-
-# Quick testing without VM (recommended for Phase 1.1)
-make magic-local
+make test           # Run all tests
+make verify-setup   # Verify environment is configured correctly
 ```
 
-**For Phase 1.2+ (when testing actual eBPF execution):**
-```bash
-# Full testing with VM (can load eBPF into kernel)
-make magic
-```
+### Build Commands
 
-**What's the difference?**
-- `make magic-local`: Builds on macOS, compiles eBPF to bytecode (fast, no VM)
-- `make magic`: Uses Lima VM, can actually load eBPF programs (required for Phase 1.2+)
+| Command | Description |
+|---------|-------------|
+| `make magic` | Build, test, install (uses VM on macOS, native on Linux) |
+| `make magic-local` | Build, test, install (native, no VM) |
+| `make dev` | Setup Lima VM (macOS only) |
+| `make shell` | Enter Lima VM (macOS only) |
+| `make build` | Build all crates |
+| `make build-agent` | Build agent only |
+| `make run-agent` | Build and run agent with sudo |
+| `make test` | Run tests |
+| `make fmt` | Format code |
+| `make clippy` | Run linter |
+| `make clean` | Delete VM and cleanup |
 
 ## Architecture
 
