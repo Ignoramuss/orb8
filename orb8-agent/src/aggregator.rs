@@ -151,7 +151,7 @@ impl FlowAggregator {
 pub fn format_ipv4(ip: u32) -> String {
     format!(
         "{}.{}.{}.{}",
-        (ip >> 0) & 0xFF,
+        ip & 0xFF,
         (ip >> 8) & 0xFF,
         (ip >> 16) & 0xFF,
         (ip >> 24) & 0xFF

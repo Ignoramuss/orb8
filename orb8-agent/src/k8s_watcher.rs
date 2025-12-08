@@ -125,11 +125,7 @@ impl PodWatcher {
             None => return,
         };
 
-        let container_statuses = status
-            .container_statuses
-            .as_ref()
-            .map(|v| v.as_slice())
-            .unwrap_or(&[]);
+        let container_statuses = status.container_statuses.as_deref().unwrap_or(&[]);
 
         for cs in container_statuses {
             let container_id = match &cs.container_id {
