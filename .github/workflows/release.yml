@@ -53,17 +53,19 @@ jobs:
         id: auth
 
       - name: Publish crates
-        uses: katyo/publish-crates@v2
-        with:
-          registry-token: ${{ steps.auth.outputs.token }}
-          ignore-unpublished-changes: true
-          publish-delay: 10000
-          packages: >
-            orb8-common
-            orb8-proto
-            orb8-cli
-            orb8-agent
-            orb8
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          # Publish in dependency order, skip already-published versions
+          cargo publish -p orb8-common || true
+          sleep 15
+          cargo publish -p orb8-proto || true
+          sleep 15
+          cargo publish -p orb8-cli || true
+          sleep 15
+          cargo publish -p orb8-agent || true
+          sleep 15
+          cargo publish -p orb8
 
   # Create GitHub Release
   release:
