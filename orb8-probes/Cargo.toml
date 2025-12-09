@@ -4,6 +4,7 @@ version = "0.0.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "eBPF probes for orb8 (kernel space)"
+publish = false
 
 [dependencies]
 aya-ebpf = "0.1.1"

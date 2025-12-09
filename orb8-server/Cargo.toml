@@ -4,6 +4,7 @@ version = "0.0.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "Central API server for orb8"
+publish = false
 
 [dependencies]
 tokio = { version = "1.41", features = ["full"] }
