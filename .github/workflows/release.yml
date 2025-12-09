@@ -58,6 +58,12 @@ jobs:
           registry-token: ${{ steps.auth.outputs.token }}
           ignore-unpublished-changes: true
           publish-delay: 10000
+          packages: >
+            orb8-common
+            orb8-proto
+            orb8-cli
+            orb8-agent
+            orb8
 
   # Create GitHub Release
   release:
