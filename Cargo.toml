@@ -79,20 +79,22 @@ panic = "abort"
 [workspace]
 members = [
     ".",
-    "orb8-probes",
     "orb8-common",
     "orb8-agent",
-    "orb8-server",
     "orb8-cli",
     "orb8-proto",
 ]
 
-# Exclude eBPF crate from default build to prevent cargo from building it for host
+# Exclude unpublishable crates from workspace to prevent cargo publish validation errors
+# orb8-probes: eBPF kernel code (built via aya_build path, not workspace dep)
+# orb8-server: Placeholder, not yet implemented
+exclude = ["orb8-probes", "orb8-server"]
+
+# Default members for cargo commands
 default-members = [
     ".",
     "orb8-common",
     "orb8-agent",
-    "orb8-server",
     "orb8-cli",
     "orb8-proto",
 ]
