@@ -21,14 +21,17 @@ pub struct PacketEvent {
 ///
 /// Layout (32 bytes total, 8-byte aligned):
 /// - timestamp_ns: Kernel timestamp in nanoseconds
-/// - cgroup_id: Container cgroup ID for pod correlation
-/// - src_ip: Source IPv4 address (network byte order)
-/// - dst_ip: Destination IPv4 address (network byte order)
+/// - cgroup_id: Container cgroup ID for pod correlation (0 for TC classifiers)
+/// - src_ip: Source IPv4 address (first octet in LSB, as read from TC classifier)
+/// - dst_ip: Destination IPv4 address (first octet in LSB, as read from TC classifier)
 /// - src_port: Source port (host byte order)
 /// - dst_port: Destination port (host byte order)
 /// - protocol: IP protocol (6=TCP, 17=UDP, 1=ICMP)
 /// - direction: Traffic direction (0=ingress, 1=egress)
 /// - packet_len: Packet size in bytes
+///
+/// Note: IP addresses are stored with first octet in LSB position. For example,
+/// 10.0.0.5 is stored as 0x0500000A. Use `from_le_bytes` when parsing IP strings.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "userspace", derive(PartialEq, Eq))]
