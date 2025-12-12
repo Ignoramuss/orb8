@@ -17,7 +17,8 @@ help:
 	@echo "  make build        - Build orb8"
 	@echo "  make build-ebpf   - Build only eBPF probes"
 	@echo "  make build-agent  - Build orb8-agent"
-	@echo "  make run-agent    - Build and run orb8-agent (requires sudo)"
+	@echo "  make run-agent    - Build and run orb8-agent debug (requires sudo)"
+	@echo "  make run-agent-release - Run installed orb8-agent (requires sudo)"
 	@echo "  make install      - Install orb8 to ~/.cargo/bin/"
 	@echo "  make uninstall    - Remove orb8 from ~/.cargo/bin/"
 	@echo ""
@@ -140,15 +141,25 @@ else
 	@limactl shell orb8-dev bash -c "cd $(shell pwd) && cargo build -p orb8-probes"
 endif
 
-# Build and run the agent (for testing)
+# Build and run the agent (for testing, debug build)
 run-agent:
 ifeq ($(UNAME_S),Linux)
-	@echo "Building and running orb8-agent..."
+	@echo "Building and running orb8-agent (debug)..."
 	@cargo build -p orb8-agent
 	@sudo ./target/debug/orb8-agent
 else
-	@echo "Building and running orb8-agent in VM..."
+	@echo "Building and running orb8-agent in VM (debug)..."
 	@limactl shell orb8-dev bash -c "cd $(shell pwd) && cargo build -p orb8-agent && sudo ./target/debug/orb8-agent"
+endif
+
+# Run the installed release agent (requires prior install)
+run-agent-release:
+ifeq ($(UNAME_S),Linux)
+	@echo "Running installed orb8-agent (release)..."
+	@sudo $$(which orb8-agent)
+else
+	@echo "Running installed orb8-agent in VM (release)..."
+	@limactl shell orb8-dev bash -c "cd $(shell pwd) && sudo \$$(which orb8-agent)"
 endif
 
 # Build agent only

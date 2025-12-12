@@ -6,8 +6,9 @@ use aya::{
     programs::{tc, SchedClassifier, TcAttachType},
     Ebpf,
 };
-use log::{info, warn};
+use log::{debug, info, warn};
 use orb8_common::NetworkFlowEvent;
+use std::fs;
 use std::mem;
 use std::path::Path;
 
@@ -27,29 +28,102 @@ impl ProbeManager {
         Ok(Self { bpf })
     }
 
-    /// Attach the network probe to the loopback interface
+    /// Attach the network probe to the loopback interface (legacy, for backwards compatibility)
     pub fn attach_to_loopback(&mut self) -> Result<()> {
-        info!("Attaching network probe to loopback interface...");
+        self.attach_to_interfaces(&["lo".to_string()])
+    }
 
-        let program: &mut SchedClassifier = self
-            .bpf
-            .program_mut("network_probe")
-            .ok_or_else(|| anyhow!("network_probe program not found in eBPF object"))?
-            .try_into()?;
+    /// Attach network probes to discovered interfaces (both ingress and egress)
+    pub fn attach_to_interfaces(&mut self, interfaces: &[String]) -> Result<()> {
+        info!(
+            "Attaching network probes to {} interfaces...",
+            interfaces.len()
+        );
 
-        program.load()?;
-
-        // Add clsact qdisc to lo interface (required for TC attachment)
-        if let Err(e) = tc::qdisc_add_clsact("lo") {
-            warn!("Failed to add clsact qdisc (may already exist): {}", e);
+        // Add clsact qdisc to all interfaces first
+        for iface in interfaces {
+            if let Err(e) = tc::qdisc_add_clsact(iface) {
+                debug!("clsact qdisc on {}: {} (may already exist)", iface, e);
+            }
         }
 
-        program
-            .attach("lo", TcAttachType::Ingress)
-            .context("Failed to attach to loopback interface")?;
+        // Load and attach ingress probe
+        {
+            let ingress_prog: &mut SchedClassifier = self
+                .bpf
+                .program_mut("network_probe")
+                .ok_or_else(|| anyhow!("network_probe program not found in eBPF object"))?
+                .try_into()?;
+            ingress_prog.load()?;
 
-        info!("Network probe attached to lo interface");
+            for iface in interfaces {
+                match ingress_prog.attach(iface, TcAttachType::Ingress) {
+                    Ok(_) => info!("Attached ingress probe to {}", iface),
+                    Err(e) => warn!("Failed to attach ingress probe to {}: {}", iface, e),
+                }
+            }
+        }
+
+        // Load and attach egress probe
+        {
+            let egress_prog: &mut SchedClassifier = self
+                .bpf
+                .program_mut("network_probe_egress")
+                .ok_or_else(|| anyhow!("network_probe_egress program not found in eBPF object"))?
+                .try_into()?;
+            egress_prog.load()?;
+
+            for iface in interfaces {
+                match egress_prog.attach(iface, TcAttachType::Egress) {
+                    Ok(_) => info!("Attached egress probe to {}", iface),
+                    Err(e) => warn!("Failed to attach egress probe to {}: {}", iface, e),
+                }
+            }
+        }
+
         Ok(())
+    }
+
+    /// Discover network interfaces to monitor
+    /// Returns the primary interface (default route) and optionally a container bridge
+    pub fn discover_interfaces() -> Vec<String> {
+        let mut interfaces = Vec::new();
+
+        // 1. Find primary interface (default route)
+        if let Some(primary) = get_default_route_interface() {
+            info!("Discovered primary interface: {}", primary);
+            interfaces.push(primary);
+        } else {
+            warn!("Could not detect primary interface, falling back to eth0");
+            if interface_exists("eth0") {
+                interfaces.push("eth0".to_string());
+            }
+        }
+
+        // 2. Find container bridge (optional, for pod-to-pod traffic)
+        for bridge in &["cni0", "docker0", "cbr0"] {
+            if interface_exists(bridge) {
+                info!("Discovered container bridge: {}", bridge);
+                interfaces.push(bridge.to_string());
+                break;
+            }
+        }
+
+        // 3. Find Docker-created bridges (br-* pattern, used by kind)
+        if let Some(docker_bridge) = find_docker_bridge() {
+            if !interfaces.contains(&docker_bridge) {
+                info!("Discovered Docker bridge: {}", docker_bridge);
+                interfaces.push(docker_bridge);
+            }
+        }
+
+        // 4. Fallback: if nothing found, try lo for local testing
+        if interfaces.is_empty() {
+            warn!("No interfaces discovered, using loopback for testing");
+            interfaces.push("lo".to_string());
+        }
+
+        interfaces
     }
 
     /// Get mutable reference to the Ebpf object for initializing the EbpfLogger.
@@ -190,4 +264,42 @@ fn check_capabilities() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Check if a network interface exists
+fn interface_exists(name: &str) -> bool {
+    Path::new(&format!("/sys/class/net/{}", name)).exists()
+}
+
+/// Get the interface with the default route by parsing /proc/net/route
+fn get_default_route_interface() -> Option<String> {
+    let route_content = fs::read_to_string("/proc/net/route").ok()?;
+
+    for line in route_content.lines().skip(1) {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() >= 2 {
+            let iface = fields[0];
+            let destination = fields[1];
+            // Default route has destination 00000000
+            if destination == "00000000" && iface != "lo" {
+                return Some(iface.to_string());
+            }
+        }
+    }
+
+    None
+}
+
+/// Find Docker-created bridges (br-* pattern, used by kind clusters)
+fn find_docker_bridge() -> Option<String> {
+    let net_dir = Path::new("/sys/class/net");
+    if let Ok(entries) = fs::read_dir(net_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("br-") {
+                return Some(name);
+            }
+        }
+    }
+    None
 }

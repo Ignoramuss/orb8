@@ -84,8 +84,8 @@ impl PodWatcher {
                 }
                 Event::InitDone => {
                     info!(
-                        "Pod watcher initial sync complete. Tracking {} pods",
-                        self.cache.len()
+                        "Pod watcher initial sync complete. Tracking {} pods (by IP)",
+                        self.cache.ip_entries_count()
                     );
                 }
             }
@@ -104,7 +104,10 @@ impl PodWatcher {
             self.handle_pod_apply(&pod);
         }
 
-        info!("Resync complete. Tracking {} cgroup IDs", self.cache.len());
+        info!(
+            "Resync complete. Tracking {} pods (by IP)",
+            self.cache.ip_entries_count()
+        );
 
         Ok(())
     }
@@ -125,7 +128,33 @@ impl PodWatcher {
             None => return,
         };
 
+        // Extract pod IP for IP-based enrichment
+        let pod_ip = status.pod_ip.as_ref().and_then(|ip| parse_ipv4(ip));
+
+        if let Some(ip) = pod_ip {
+            debug!(
+                "Pod {}/{} has IP {} (0x{:08x})",
+                namespace,
+                name,
+                status.pod_ip.as_ref().unwrap(),
+                ip
+            );
+        }
+
         let container_statuses = status.container_statuses.as_deref().unwrap_or(&[]);
+
+        // If we have a pod IP, insert it for IP-based lookup (even without container info)
+        if pod_ip.is_some() {
+            let metadata = PodMetadata {
+                namespace: namespace.to_string(),
+                pod_name: name.to_string(),
+                pod_uid: pod_uid.to_string(),
+                container_name: String::new(),
+                container_id: String::new(),
+                pod_ip,
+            };
+            self.cache.insert_by_ip(metadata);
+        }
 
         for cs in container_statuses {
             let container_id = match &cs.container_id {
@@ -142,6 +171,7 @@ impl PodWatcher {
                         pod_uid: pod_uid.to_string(),
                         container_name: cs.name.clone(),
                         container_id: container_id.clone(),
+                        pod_ip,
                     };
 
                     self.cache.insert(cgroup_id, metadata);
@@ -171,5 +201,47 @@ impl PodWatcher {
             self.cache.remove_pod(pod_uid);
             debug!("Removed pod {}/{} from cache", namespace, name);
         }
+    }
+}
+
+/// Parse an IPv4 address string to u32
+/// Format: first octet in LSB position (consistent with how eBPF probe reads IPs)
+fn parse_ipv4(ip_str: &str) -> Option<u32> {
+    let parts: Vec<u8> = ip_str.split('.').filter_map(|p| p.parse().ok()).collect();
+
+    if parts.len() == 4 {
+        // Store with first octet in LSB (same as eBPF reads from packets)
+        Some(u32::from_le_bytes([parts[0], parts[1], parts[2], parts[3]]))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_ipv4_byte_order() {
+        // 10.0.0.5: first octet (10) in LSB position
+        // [10, 0, 0, 5] as little-endian = 0x0500000A
+        assert_eq!(parse_ipv4("10.0.0.5"), Some(0x0500000A));
+
+        // 192.168.1.100: [192, 168, 1, 100] as little-endian = 0x6401A8C0
+        assert_eq!(parse_ipv4("192.168.1.100"), Some(0x6401A8C0));
+
+        // 172.18.0.2: [172, 18, 0, 2] as little-endian = 0x020012AC
+        assert_eq!(parse_ipv4("172.18.0.2"), Some(0x020012AC));
+
+        // Loopback 127.0.0.1
+        assert_eq!(parse_ipv4("127.0.0.1"), Some(0x0100007F));
+    }
+
+    #[test]
+    fn test_parse_ipv4_invalid() {
+        assert_eq!(parse_ipv4(""), None);
+        assert_eq!(parse_ipv4("10.0.0"), None);
+        assert_eq!(parse_ipv4("not.an.ip.addr"), None);
+        assert_eq!(parse_ipv4("256.0.0.1"), None);
     }
 }

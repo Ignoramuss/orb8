@@ -1166,11 +1166,16 @@ This section documents what is actually implemented as of Phase 2 (v0.0.2).
   > **Note**: `bpf_get_current_cgroup_id()` not available for TC classifiers.
   > Using K8s API-based enrichment with cgroup_id=0 fallback.
 
-- **Phase 3** (Network MVP): 🔄 In Progress
+- **Phase 3** (Network MVP): 🔄 In Progress (v0.0.3)
   - ✅ Full packet parsing (5-tuple extraction)
   - ✅ gRPC QueryFlows, StreamEvents, GetStatus
-  - ⏳ CLI trace network command
+  - ✅ CLI trace network command
+  - ✅ IP-based pod enrichment tested with kind cluster
+  - ✅ Smart interface discovery (eth0, cni0, docker0, br-*)
   - ⏳ Public release
+
+  > **v0.0.3 Note**: Fixed IP byte order in pod cache lookup. TC probes read IPs
+  > with first octet in LSB position; `parse_ipv4()` now uses `from_le_bytes()`.
 
 ### What's Not Yet Implemented
 
@@ -1186,16 +1191,25 @@ The following components exist in the target architecture but are not yet implem
 
 ## References
 
+### eBPF & Rust
 - [eBPF Documentation](https://ebpf.io/)
 - [aya Book](https://aya-rs.dev/book/)
+- [gRPC in Rust (tonic)](https://github.com/hyperium/tonic)
+
+### Kubernetes
 - [Kubernetes API](https://kubernetes.io/docs/reference/)
 - [Linux cgroup v2](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html)
+
+### Further Reading
+- [Cilium Hubble](https://docs.cilium.io/en/stable/observability/hubble/)
+- [Pixie](https://docs.px.dev/about-pixie/what-is-pixie/)
+- [Tetragon](https://tetragon.io/)
+
+### GPU
 - [NVIDIA DCGM](https://developer.nvidia.com/dcgm)
-- [gRPC in Rust](https://github.com/hyperium/tonic)
-- [BTF and CO-RE](https://nakryiko.com/posts/bpf-portability-and-co-re/)
 
 ---
 
-**Document Version**: 1.2
-**Last Updated**: 2025-12-04
+**Document Version**: 1.3
+**Last Updated**: 2025-12-11
 **Authors**: orb8 maintainers
