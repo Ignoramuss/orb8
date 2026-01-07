@@ -43,6 +43,14 @@ pub fn network_probe(ctx: TcContext) -> i32 {
     }
 }
 
+#[classifier]
+pub fn network_probe_egress(ctx: TcContext) -> i32 {
+    match try_network_probe(&ctx, direction::EGRESS) {
+        Ok(ret) => ret,
+        Err(_) => TC_ACT_OK,
+    }
+}
+
 /// Safe pointer-at function for reading packet data
 #[inline(always)]
 unsafe fn ptr_at<T>(ctx: &TcContext, offset: usize) -> Result<*const T, ()> {

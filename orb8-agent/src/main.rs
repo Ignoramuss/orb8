@@ -31,6 +31,9 @@ async fn main() -> Result<()> {
     use std::time::Duration;
     use tokio::signal;
 
+    // gRPC server port - used for binding and traffic filtering
+    const GRPC_PORT: u16 = 9090;
+
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     info!("orb8-agent starting...");
@@ -62,7 +65,7 @@ async fn main() -> Result<()> {
     let aggregator = FlowAggregator::new(pod_cache.clone());
 
     // Start gRPC server
-    let grpc_addr: SocketAddr = "0.0.0.0:9090".parse()?;
+    let grpc_addr: SocketAddr = format!("0.0.0.0:{}", GRPC_PORT).parse()?;
     let event_tx = grpc_server::start_server(aggregator.clone(), grpc_addr).await?;
 
     // Load and attach eBPF probes
@@ -75,7 +78,9 @@ async fn main() -> Result<()> {
         );
     }
 
-    manager.attach_to_loopback()?;
+    // Discover and attach to network interfaces
+    let interfaces = ProbeManager::discover_interfaces();
+    manager.attach_to_interfaces(&interfaces)?;
 
     let mut ring_buf = manager.events_ring_buf()?;
 
@@ -108,13 +113,32 @@ async fn main() -> Result<()> {
             _ = tokio::time::sleep(Duration::from_millis(100)) => {
                 let events = poll_events(&mut ring_buf);
                 for event in events {
+                    // Filter out agent's own gRPC traffic (noise from CLI connections)
+                    if event.src_port == GRPC_PORT || event.dst_port == GRPC_PORT {
+                        continue;
+                    }
+
                     // Process event for aggregation
                     aggregator.process_event(&event);
 
-                    // Try to enrich with pod metadata
-                    let (namespace, pod_name) = match pod_cache.get(event.cgroup_id) {
-                        Some(meta) => (meta.namespace.clone(), meta.pod_name.clone()),
-                        None => ("unknown".to_string(), format!("cgroup-{}", event.cgroup_id)),
+                    // IP-based pod enrichment
+                    // Try to match src_ip or dst_ip to known pod IPs
+                    let src_pod = pod_cache.get_by_ip(event.src_ip);
+                    let dst_pod = pod_cache.get_by_ip(event.dst_ip);
+
+                    // Determine which pod this traffic belongs to based on direction
+                    // ingress: traffic coming TO a local pod (dst is the pod)
+                    // egress: traffic going FROM a local pod (src is the pod)
+                    let (namespace, pod_name) = if event.direction == orb8_common::direction::INGRESS {
+                        dst_pod
+                            .map(|p| (p.namespace, p.pod_name))
+                            .or_else(|| src_pod.map(|p| (p.namespace, p.pod_name)))
+                            .unwrap_or_else(|| ("external".to_string(), "unknown".to_string()))
+                    } else {
+                        src_pod
+                            .map(|p| (p.namespace, p.pod_name))
+                            .or_else(|| dst_pod.map(|p| (p.namespace, p.pod_name)))
+                            .unwrap_or_else(|| ("external".to_string(), "unknown".to_string()))
                     };
 
                     // Broadcast to stream subscribers
