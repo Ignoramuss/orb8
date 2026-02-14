@@ -17,7 +17,7 @@ use aya_ebpf::{
     bindings::TC_ACT_OK,
     helpers::bpf_ktime_get_ns,
     macros::{classifier, map},
-    maps::RingBuf,
+    maps::{Array, RingBuf},
     programs::TcContext,
 };
 use orb8_common::{direction, protocol, NetworkFlowEvent};
@@ -34,6 +34,12 @@ const IP_HLEN_MIN: usize = 20;
 
 #[map]
 static EVENTS: RingBuf = RingBuf::with_byte_size(RING_BUF_SIZE, 0);
+
+/// Counter for ring buffer drop events (reserve failures).
+/// Single-element array: index 0 holds the cumulative drop count.
+/// Read by userspace to surface in GetStatus.
+#[map]
+static EVENTS_DROPPED: Array<u64> = Array::with_max_entries(1, 0);
 
 #[classifier]
 pub fn network_probe(ctx: TcContext) -> i32 {
@@ -141,6 +147,8 @@ fn try_network_probe(ctx: &TcContext, dir: u8) -> Result<i32, ()> {
         };
         entry.write(event);
         entry.submit(0);
+    } else if let Some(counter) = EVENTS_DROPPED.get_ptr_mut(0) {
+        unsafe { *counter += 1 };
     }
 
     Ok(TC_ACT_OK)

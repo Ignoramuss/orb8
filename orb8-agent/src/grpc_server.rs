@@ -10,6 +10,8 @@ use orb8_proto::{
     OrbitAgentServiceServer, QueryFlowsRequest, QueryFlowsResponse, StreamEventsRequest,
 };
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast;
 use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
@@ -21,11 +23,16 @@ pub struct AgentService {
     node_name: String,
     start_time: Instant,
     event_tx: broadcast::Sender<NetworkEvent>,
+    events_dropped: Arc<AtomicU64>,
 }
 
 impl AgentService {
     /// Create a new agent service
-    pub fn new(aggregator: FlowAggregator, node_name: String) -> Self {
+    pub fn new(
+        aggregator: FlowAggregator,
+        node_name: String,
+        events_dropped: Arc<AtomicU64>,
+    ) -> Self {
         let (event_tx, _) = broadcast::channel(1000);
 
         Self {
@@ -33,6 +40,7 @@ impl AgentService {
             node_name,
             start_time: Instant::now(),
             event_tx,
+            events_dropped,
         }
     }
 
@@ -123,8 +131,8 @@ impl OrbitAgentService for AgentService {
             healthy: true,
             health_message: "OK".to_string(),
             events_processed: self.aggregator.events_processed(),
-            events_dropped: self.aggregator.events_dropped(),
-            pods_tracked: self.aggregator.pod_cache().len() as u32,
+            events_dropped: self.events_dropped.load(Ordering::Relaxed),
+            pods_tracked: self.aggregator.pod_cache().ip_entries_count() as u32,
             active_flows: self.aggregator.active_flow_count() as u32,
             uptime_seconds: uptime,
         }))
@@ -135,12 +143,13 @@ impl OrbitAgentService for AgentService {
 pub async fn start_server(
     aggregator: FlowAggregator,
     addr: std::net::SocketAddr,
+    events_dropped: Arc<AtomicU64>,
 ) -> Result<broadcast::Sender<NetworkEvent>> {
     let node_name = std::env::var("NODE_NAME")
         .or_else(|_| hostname::get().map(|h| h.to_string_lossy().to_string()))
         .unwrap_or_else(|_| "unknown".to_string());
 
-    let service = AgentService::new(aggregator, node_name);
+    let service = AgentService::new(aggregator, node_name, events_dropped);
     let event_tx = service.event_sender();
 
     info!("Starting gRPC server on {}", addr);

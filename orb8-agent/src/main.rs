@@ -9,6 +9,9 @@
 
 use anyhow::Result;
 
+#[cfg(target_os = "linux")]
+use std::collections::HashSet;
+
 #[cfg(not(target_os = "linux"))]
 fn main() -> Result<()> {
     eprintln!("Error: orb8-agent requires Linux to run eBPF programs");
@@ -25,9 +28,11 @@ async fn main() -> Result<()> {
     use orb8_agent::grpc_server;
     use orb8_agent::k8s_watcher::PodWatcher;
     use orb8_agent::pod_cache::PodCache;
-    use orb8_agent::probe_loader::{poll_events, ProbeManager};
+    use orb8_agent::probe_loader::{poll_events, read_events_dropped, ProbeManager};
     use orb8_proto::NetworkEvent;
     use std::net::SocketAddr;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio::signal;
 
@@ -64,9 +69,13 @@ async fn main() -> Result<()> {
     // Initialize flow aggregator
     let aggregator = FlowAggregator::new(pod_cache.clone());
 
+    // Shared counter for ring buffer drops, updated from eBPF map each poll cycle
+    let events_dropped = Arc::new(AtomicU64::new(0));
+
     // Start gRPC server
     let grpc_addr: SocketAddr = format!("0.0.0.0:{}", GRPC_PORT).parse()?;
-    let event_tx = grpc_server::start_server(aggregator.clone(), grpc_addr).await?;
+    let event_tx =
+        grpc_server::start_server(aggregator.clone(), grpc_addr, events_dropped.clone()).await?;
 
     // Load and attach eBPF probes
     let mut manager = ProbeManager::new()?;
@@ -82,6 +91,20 @@ async fn main() -> Result<()> {
     let interfaces = ProbeManager::discover_interfaces();
     manager.attach_to_interfaces(&interfaces)?;
 
+    // Collect local IPs for self-traffic filtering (only filter gRPC port
+    // on the agent's own addresses, not on arbitrary remote endpoints)
+    let local_ips = resolve_local_ips();
+    if local_ips.is_empty() {
+        warn!("Could not resolve local IPs; self-traffic filter will use port-only matching");
+    } else {
+        info!(
+            "Self-traffic filter: port {} on {} local IPs",
+            GRPC_PORT,
+            local_ips.len()
+        );
+    }
+
+    let drop_counter_map = manager.events_dropped_reader();
     let mut ring_buf = manager.events_ring_buf()?;
 
     info!("orb8-agent running. Press Ctrl+C to exit.");
@@ -111,10 +134,16 @@ async fn main() -> Result<()> {
                 break;
             }
             _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                // Sync ring buffer drop count from eBPF map
+                if let Some(ref map) = drop_counter_map {
+                    events_dropped.store(read_events_dropped(map), Ordering::Relaxed);
+                }
+
                 let events = poll_events(&mut ring_buf);
                 for event in events {
-                    // Filter out agent's own gRPC traffic (noise from CLI connections)
-                    if event.src_port == GRPC_PORT || event.dst_port == GRPC_PORT {
+                    // Filter out agent's own gRPC traffic (noise from CLI connections).
+                    // Match on port AND local IP to avoid hiding legitimate app traffic on port 9090.
+                    if is_self_traffic(&event, GRPC_PORT, &local_ips) {
                         continue;
                     }
 
@@ -175,4 +204,56 @@ async fn main() -> Result<()> {
 
     info!("orb8-agent stopped");
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn is_self_traffic(
+    event: &orb8_common::NetworkFlowEvent,
+    grpc_port: u16,
+    local_ips: &HashSet<u32>,
+) -> bool {
+    if local_ips.is_empty() {
+        // Fallback: port-only filter when local IPs couldn't be resolved
+        return event.src_port == grpc_port || event.dst_port == grpc_port;
+    }
+    (event.src_port == grpc_port && local_ips.contains(&event.src_ip))
+        || (event.dst_port == grpc_port && local_ips.contains(&event.dst_ip))
+}
+
+#[cfg(target_os = "linux")]
+fn resolve_local_ips() -> HashSet<u32> {
+    let mut ips = HashSet::new();
+    ips.insert(u32::from_le_bytes([127, 0, 0, 1]));
+
+    if let Ok(content) = std::fs::read_to_string("/proc/net/fib_trie") {
+        // Parse local addresses from fib_trie. Lines matching "LOCAL" on the next
+        // line indicate the preceding /32 host address is a local IP.
+        let lines: Vec<&str> = content.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if line.trim().starts_with("|-- ") || line.trim().starts_with("+-- ") {
+                if let Some(next_line) = lines.get(i + 1) {
+                    if next_line.contains("/32 host LOCAL") {
+                        let ip_str = line
+                            .trim()
+                            .trim_start_matches("|-- ")
+                            .trim_start_matches("+-- ");
+                        if let Some(ip) = parse_ipv4_le(ip_str) {
+                            ips.insert(ip);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ips
+}
+
+#[cfg(target_os = "linux")]
+fn parse_ipv4_le(ip_str: &str) -> Option<u32> {
+    let parts: Vec<u8> = ip_str.split('.').filter_map(|p| p.parse().ok()).collect();
+    if parts.len() == 4 {
+        Some(u32::from_le_bytes([parts[0], parts[1], parts[2], parts[3]]))
+    } else {
+        None
+    }
 }
