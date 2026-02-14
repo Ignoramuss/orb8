@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use aya::{
-    maps::RingBuf,
+    maps::{Array, RingBuf},
     programs::{tc, SchedClassifier, TcAttachType},
     Ebpf,
 };
@@ -145,12 +145,49 @@ impl ProbeManager {
         RingBuf::try_from(map).context("Failed to create RingBuf from EVENTS map")
     }
 
+    /// Create a standalone, owned `Array` for reading the EVENTS_DROPPED counter.
+    ///
+    /// Pins the map to bpffs and re-opens it from the pin, producing an owned
+    /// `Array` that doesn't borrow from `self`. This allows coexistence with the
+    /// ring buffer reference. The pin is cleaned up on drop via the temp path.
+    pub fn events_dropped_reader(&mut self) -> Option<Array<aya::maps::MapData, u64>> {
+        let pin_path = "/sys/fs/bpf/orb8_events_dropped";
+
+        // Pin the map so we can open it independently
+        let map = self.bpf.map_mut("EVENTS_DROPPED")?;
+        if let Err(e) = map.pin(pin_path) {
+            warn!("Failed to pin EVENTS_DROPPED map: {}", e);
+            return None;
+        }
+
+        // Open from pin — this gives us an owned MapData
+        let map_data = match aya::maps::MapData::from_pin(pin_path) {
+            Ok(md) => md,
+            Err(e) => {
+                warn!("Failed to open EVENTS_DROPPED from pin: {}", e);
+                let _ = std::fs::remove_file(pin_path);
+                return None;
+            }
+        };
+
+        // Clean up pin file (the fd stays valid)
+        let _ = std::fs::remove_file(pin_path);
+
+        let map = aya::maps::Map::Array(map_data);
+        Array::try_from(map).ok()
+    }
+
     /// Detach and unload all probes
     pub fn unload(self) {
         info!("Unloading eBPF probes...");
         drop(self.bpf);
         info!("Probes unloaded");
     }
+}
+
+/// Read the cumulative ring buffer drop count from the standalone EVENTS_DROPPED map.
+pub fn read_events_dropped(map: &Array<aya::maps::MapData, u64>) -> u64 {
+    map.get(&0, 0).unwrap_or(0)
 }
 
 /// Poll events from the ring buffer

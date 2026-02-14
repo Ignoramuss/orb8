@@ -7,6 +7,15 @@
 
 #![cfg_attr(not(feature = "userspace"), no_std)]
 
+// IP address handling assumes little-endian architecture throughout.
+// The eBPF probe reads IPs via native pointer dereference and userspace
+// parses with from_le_bytes — these are only equivalent on LE systems.
+#[cfg(not(target_endian = "little"))]
+compile_error!(
+    "orb8 requires a little-endian target (x86_64, aarch64). \
+     IP address byte order handling is not compatible with big-endian systems."
+);
+
 /// Simple packet event (legacy, kept for backward compatibility)
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]

@@ -8,7 +8,7 @@ orb8 is an eBPF-powered observability toolkit for Kubernetes with first-class GP
 
 **Architecture**: Dual-mode platform supporting both cluster-wide monitoring (DaemonSet) and standalone on-demand tracing.
 
-**Current Status**: Phase 0 (Foundation) - Monorepo structure established, development environment ready.
+**Current Status**: Phase 3 (Network Tracing MVP) - IP-based pod enrichment, eBPF TC classifiers, gRPC API.
 
 ## Monorepo Structure
 
@@ -103,12 +103,14 @@ eBPF probes are written in Rust using aya-bpf:
 # Build probes (automatically triggered by workspace build)
 cargo build -p orb8-probes
 
-# Verify probe compilation
-ls target/bpfel-unknown-none/release/*.o
+# Verify probe compilation (note: no .o extension)
+ls target/bpfel-unknown-none/release/orb8_probes
 
 # Load and test probe (requires Linux)
 sudo cargo run -p orb8-agent
 ```
+
+**Critical**: Probes are **embedded in the agent binary** at compile time via `include_bytes_aligned!` in `orb8-agent/build.rs`. The Dockerfile does NOT need to copy probe files separately.
 
 ## Architecture
 
@@ -118,10 +120,11 @@ orb8 consists of **eBPF probes** (kernel space) and **Rust services** (user spac
 
 **Run in**: Kernel space
 **Language**: Rust (no_std) using aya-bpf
-**Compile to**: `.bpf.o` eBPF bytecode
+**Compile to**: ELF eBPF relocatable (`target/bpfel-unknown-none/release/orb8_probes`)
+**Embedded via**: `include_bytes_aligned!` in agent's build.rs
 
-Probes (named following orbit theme):
-- `network_probe.rs` - Network flow tracing (tc hook)
+Probes:
+- `network_probe.rs` - Network flow tracing (TC classifier, ingress/egress)
 - `syscall_probe.rs` - System call monitoring (tracepoint)
 - `gpu_probe.rs` - GPU telemetry (kprobe/uprobe)
 
@@ -280,13 +283,14 @@ cargo test --lib                    # Test all library code
 cargo test -p orb8-agent --lib      # Test specific crate
 ```
 
-### Integration Tests
+### E2E Tests
 
 ```bash
-cargo test --test integration_test  # End-to-end tests
+make e2e-test                       # Full DaemonSet deployment test with kind
+make smoke-test                     # Quick probe loading test (no k8s)
 ```
 
-**Require**: Linux VM with Kubernetes (minikube)
+**Require**: Linux (or Lima VM on macOS), Docker, kind, kubectl
 
 ### eBPF Probe Tests
 
@@ -296,6 +300,8 @@ cargo test --test integration_test  # End-to-end tests
 # Inside VM
 sudo cargo test -p orb8-probes
 ```
+
+See **Validation & Testing** section for detailed verification steps.
 
 ## Important Architectural Constraints
 
@@ -310,16 +316,16 @@ sudo cargo test -p orb8-probes
 Development follows **phase-based approach** without strict timelines:
 
 - **Phase 0**: ✅ Foundation & monorepo (COMPLETE)
-- **Phase 1**: eBPF Infrastructure (load probes, ring buffers)
-- **Phase 2**: Container Identification (cgroup mapping)
-- **Phase 3**: Network Tracing MVP (first public release)
+- **Phase 1**: ✅ eBPF Infrastructure (COMPLETE)
+- **Phase 2**: ✅ Container Identification (COMPLETE)
+- **Phase 3**: 🔧 Network Tracing MVP (IN PROGRESS)
 - **Phase 4**: Cluster Mode (DaemonSet + central server)
 - **Phase 5**: Metrics & Observability (Prometheus, Grafana)
 - **Phase 6**: Syscall Monitoring
 - **Phase 7**: GPU Telemetry
 - **Phase 8**: Advanced Features (TUI, standalone mode)
 
-**Current**: Implementing Phase 1
+**Current**: Implementing Phase 3
 
 See `docs/ROADMAP.md` for granular implementation details.
 
@@ -428,6 +434,73 @@ When implementing new features:
 3. **Add tests** (unit + integration)
 4. **Update docs** as you go
 5. **Run `cargo fmt` and `cargo clippy`** before committing
+
+## Validation & Testing
+
+### Container Build
+
+```bash
+make docker-build     # Builds agent with embedded probes, creates orb8-agent:test image
+```
+
+The Dockerfile only copies the agent binary. Probes are embedded at compile time via `orb8-agent/build.rs` using `aya_build::build_ebpf()`.
+
+### E2E Testing
+
+```bash
+make e2e-test         # Full test: build, deploy to kind, generate traffic, verify
+make smoke-test       # Quick test: probe loading only, no k8s
+```
+
+E2E test creates a 2-node kind cluster, deploys the DaemonSet, and verifies:
+1. Probes load successfully
+2. Probes attach to network interfaces
+3. Traffic events are captured with pod enrichment
+
+### Agent Startup Verification
+
+When validating agent changes, check logs for these messages in order:
+
+```
+INFO  orb8_agent::probe_loader] Running pre-flight checks...
+INFO  orb8_agent::probe_loader] Pre-flight checks passed
+INFO  orb8_agent::probe_loader] Loading network probe...
+INFO  orb8_agent::probe_loader] Attached ingress probe to eth0
+INFO  orb8_agent::probe_loader] Attached egress probe to eth0
+INFO  orb8_agent::k8s_watcher] Pod watcher initial sync complete. Tracking N pods (by IP)
+```
+
+Traffic events appear as:
+```
+[namespace/pod_name] src_ip:src_port -> dst_ip:dst_port PROTO direction len=N
+```
+
+### DaemonSet Security Model
+
+The agent runs with `privileged: false` and specific capabilities:
+- `BPF` - Load eBPF programs
+- `NET_ADMIN` - Attach TC classifiers
+- `SYS_ADMIN` - Access tracepoints
+- `PERFMON` - Performance monitoring
+- `SYS_RESOURCE` - Increase rlimits
+
+Required volume mounts: `/sys` (ro), `/sys/kernel/debug` (rw), `/sys/fs/cgroup` (ro)
+
+### Common Validation Failures
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `Failed to load probes` | Missing BTF or old kernel | Check `/sys/kernel/btf/vmlinux` exists, kernel >= 5.8 |
+| `Permission denied` on probe load | Missing capabilities | Verify DaemonSet securityContext has required caps |
+| No traffic events | Probes not attached | Check logs for `Attached.*probe to` |
+| Events missing pod names | K8s watcher not synced | Check `Pod watcher initial sync complete` in logs |
+| `ErrImageNeverPull` in kind | Image not loaded | Run `kind load docker-image orb8-agent:test` |
+
+### Lima VM Notes
+
+- VM must be running for `make e2e-test` on macOS: `limactl start orb8-dev`
+- DNS issues after VM sleep: `limactl shell orb8-dev -- sudo systemctl restart systemd-resolved`
+- Project mounted at same path inside VM
 
 ## Code Style
 
