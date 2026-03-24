@@ -1,8 +1,6 @@
-//! gRPC server implementation for the agent
-//!
-//! Implements `OrbitAgentService` to expose flow data and status via gRPC.
-
-use crate::aggregator::{format_direction, format_ipv4, format_protocol, FlowAggregator};
+use crate::aggregator::FlowAggregator;
+use crate::net::{format_direction, format_ipv4, format_protocol};
+use crate::pod_cache::PodCache;
 use anyhow::Result;
 use log::info;
 use orb8_proto::{
@@ -17,9 +15,9 @@ use tokio::sync::broadcast;
 use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 use tonic::{Request, Response, Status};
 
-/// gRPC service implementation
 pub struct AgentService {
     aggregator: FlowAggregator,
+    pod_cache: PodCache,
     node_name: String,
     start_time: Instant,
     event_tx: broadcast::Sender<NetworkEvent>,
@@ -27,9 +25,9 @@ pub struct AgentService {
 }
 
 impl AgentService {
-    /// Create a new agent service
     pub fn new(
         aggregator: FlowAggregator,
+        pod_cache: PodCache,
         node_name: String,
         events_dropped: Arc<AtomicU64>,
     ) -> Self {
@@ -37,6 +35,7 @@ impl AgentService {
 
         Self {
             aggregator,
+            pod_cache,
             node_name,
             start_time: Instant::now(),
             event_tx,
@@ -44,7 +43,6 @@ impl AgentService {
         }
     }
 
-    /// Get a sender for broadcasting events to stream subscribers
     pub fn event_sender(&self) -> broadcast::Sender<NetworkEvent> {
         self.event_tx.clone()
     }
@@ -84,7 +82,6 @@ impl OrbitAgentService for AgentService {
             })
             .collect();
 
-        // Sort by bytes descending
         flows.sort_by(|a, b| b.bytes.cmp(&a.bytes));
         flows.truncate(limit);
 
@@ -102,18 +99,15 @@ impl OrbitAgentService for AgentService {
         let namespaces: Vec<String> = req.namespaces;
 
         let rx = self.event_tx.subscribe();
-        let stream = BroadcastStream::new(rx).filter_map(move |result| {
-            match result {
-                Ok(event) => {
-                    // Filter by namespace if specified
-                    if namespaces.is_empty() || namespaces.contains(&event.namespace) {
-                        Some(Ok(event))
-                    } else {
-                        None
-                    }
+        let stream = BroadcastStream::new(rx).filter_map(move |result| match result {
+            Ok(event) => {
+                if namespaces.is_empty() || namespaces.contains(&event.namespace) {
+                    Some(Ok(event))
+                } else {
+                    None
                 }
-                Err(_) => None, // Skip lagged events
             }
+            Err(_) => None,
         });
 
         Ok(Response::new(Box::pin(stream)))
@@ -132,16 +126,16 @@ impl OrbitAgentService for AgentService {
             health_message: "OK".to_string(),
             events_processed: self.aggregator.events_processed(),
             events_dropped: self.events_dropped.load(Ordering::Relaxed),
-            pods_tracked: self.aggregator.pod_cache().ip_entries_count() as u32,
+            pods_tracked: self.pod_cache.ip_entries_count() as u32,
             active_flows: self.aggregator.active_flow_count() as u32,
             uptime_seconds: uptime,
         }))
     }
 }
 
-/// Start the gRPC server
 pub async fn start_server(
     aggregator: FlowAggregator,
+    pod_cache: PodCache,
     addr: std::net::SocketAddr,
     events_dropped: Arc<AtomicU64>,
 ) -> Result<broadcast::Sender<NetworkEvent>> {
@@ -149,7 +143,7 @@ pub async fn start_server(
         .or_else(|_| hostname::get().map(|h| h.to_string_lossy().to_string()))
         .unwrap_or_else(|_| "unknown".to_string());
 
-    let service = AgentService::new(aggregator, node_name, events_dropped);
+    let service = AgentService::new(aggregator, pod_cache, node_name, events_dropped);
     let event_tx = service.event_sender();
 
     info!("Starting gRPC server on {}", addr);

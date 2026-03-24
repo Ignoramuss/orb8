@@ -24,11 +24,7 @@
 
 ## System Overview
 
-orb8 is a **dual-mode observability platform** that combines:
-- **Cluster Mode**: Always-on DaemonSet-based monitoring (Pixie-style)
-- **Standalone Mode**: On-demand CLI tracing (kubectl-trace-style)
-
-Both modes leverage **eBPF probes** written entirely in **Rust** using the aya framework for kernel-level telemetry with minimal overhead.
+orb8 is a **DaemonSet-based observability platform** providing always-on cluster-wide monitoring (Pixie-style). It leverages **eBPF probes** written entirely in **Rust** using the aya framework for kernel-level telemetry with minimal overhead.
 
 ### High-Level Architecture
 
@@ -99,82 +95,72 @@ Both modes leverage **eBPF probes** written entirely in **Rust** using the aya f
 
 ## Monorepo Structure
 
-orb8 is organized as a **Cargo workspace** with multiple crates.
+orb8 is organized as a **virtual Cargo workspace** (no root package) with multiple crates.
 
 > **Note**: The structure below shows the **target architecture**. See the "Current Implementation Status" section at the end of this document for what is actually implemented in each phase.
 
 ```
 orb8/
-├── Cargo.toml                        # Workspace definition
+├── Cargo.toml                        # Virtual workspace ONLY (no [package])
 │
-├── orb8-probes/                      # eBPF probes (kernel space)
+├── orb8-probes/                      # eBPF probes (kernel space, no_std)
 │   ├── Cargo.toml
 │   ├── src/
-│   │   ├── network_probe.rs          # Network flow tracing
-│   │   ├── syscall_probe.rs          # System call monitoring
-│   │   └── gpu_probe.rs              # GPU telemetry
+│   │   ├── network_probe.rs          # Network flow tracing (TC classifier)
+│   │   ├── syscall_probe.rs          # System call monitoring (Phase 8)
+│   │   └── gpu_probe.rs              # GPU telemetry (Phase 9)
 │   └── build.rs                      # eBPF compilation
 │
-├── orb8-common/                      # Shared types
+├── orb8-common/                      # Shared types (no_std compatible)
+│   ├── Cargo.toml
+│   └── src/
+│       └── lib.rs                    # NetworkFlowEvent, constants
+│
+├── orb8-util/                        # Userspace shared utilities (Phase 6)
 │   ├── Cargo.toml
 │   └── src/
 │       ├── lib.rs
-│       ├── events.rs                 # Event definitions (shared kernel/user)
-│       └── types.rs                  # Common data structures
+│       ├── format.rs                 # Display formatting (bytes, truncation)
+│       ├── parse.rs                  # Duration parsing
+│       └── net.rs                    # IP formatting/parsing
 │
 ├── orb8-agent/                       # Node agent (DaemonSet)
 │   ├── Cargo.toml
 │   └── src/
-│       ├── main.rs
-│       ├── probe_loader.rs           # Load eBPF probes
-│       ├── collector.rs              # Poll ring buffers
-│       ├── enricher.rs               # Add pod metadata to events
-│       ├── aggregator.rs             # Time-series aggregation
-│       ├── api_server.rs             # gRPC server
-│       ├── prom_exporter.rs          # Prometheus metrics
-│       └── k8s/
-│           ├── mod.rs
-│           ├── watcher.rs            # Watch pod lifecycle
-│           └── cgroup.rs             # cgroup ID resolution
+│       ├── main.rs                   # Entrypoint + event loop
+│       ├── lib.rs                    # Module declarations
+│       ├── net.rs                    # IP parsing/formatting (consolidated)
+│       ├── aggregator.rs             # Flow aggregation
+│       ├── grpc_server.rs            # gRPC service
+│       ├── probe_loader.rs           # eBPF lifecycle
+│       ├── cgroup.rs                 # Cgroup resolution
+│       ├── pod_cache.rs              # Pod metadata cache
+│       └── k8s_watcher.rs            # Pod lifecycle watcher
 │
-├── orb8-server/                      # Central API server
+├── orb8-server/                      # Central API server (Phase 7)
 │   ├── Cargo.toml
 │   └── src/
-│       ├── main.rs
-│       ├── api.rs                    # gRPC service implementation
-│       ├── aggregator.rs             # Cluster-wide aggregation
-│       └── query.rs                  # Query routing to agents
+│       └── lib.rs                    # Stub
 │
-├── orb8-cli/                         # CLI tool
+├── orb8-cli/                         # CLI tool (produces `orb8` binary)
 │   ├── Cargo.toml
 │   └── src/
-│       ├── main.rs
-│       ├── commands/
-│       │   ├── mod.rs
-│       │   ├── trace.rs              # Tracing commands
-│       │   ├── query.rs              # Query commands
-│       │   └── dashboard.rs          # TUI dashboard
-│       ├── client.rs                 # gRPC client
-│       └── standalone.rs             # Standalone mode (direct eBPF)
+│       ├── main.rs                   # CLI commands
+│       └── lib.rs
 │
-├── orb8-proto/                       # Protocol definitions
+├── orb8-proto/                       # gRPC protocol definitions
 │   ├── Cargo.toml
 │   ├── build.rs
 │   └── proto/
-│       └── orb8.proto                # gRPC service definitions
+│       └── orb8.proto                # Service definitions
 │
-├── tests/
-│   ├── integration/                  # End-to-end tests
-│   └── fixtures/                     # Test manifests
+├── deploy/                           # Dockerfile + K8s manifests (Phase 4)
+│
+├── tests/                            # Integration tests
 │
 ├── docs/
 │   ├── ARCHITECTURE.md               # This file
 │   └── ROADMAP.md                    # Development roadmap
-│
-├── deploy/
-│   ├── daemonset.yaml                # Agent DaemonSet
-│   ├── server.yaml                   # Central server deployment
-│   └── rbac.yaml                     # RBAC configuration
 │
 ├── .lima/                            # macOS development VM
 │   └── orb8-dev.yaml
@@ -183,119 +169,125 @@ orb8/
     └── setup-lima.sh
 ```
 
-### Workspace Dependencies
+### Target Agent Structure (Phase 6)
 
-The workspace crates have the following dependency graph:
+The agent will be refactored into a composable pipeline architecture:
 
 ```
-orb8-cli ─────┐
-              ├──> orb8-proto ──> orb8-common
-orb8-server ──┤
-              │
-orb8-agent ───┴──> orb8-common <─── orb8-probes
+orb8-agent/src/
+  main.rs                       # Slim entrypoint (~80 lines)
+  lib.rs                        # Module declarations
+  config.rs                     # AgentConfig struct, env var parsing
+  event.rs                      # EnrichedEvent (canonical enriched type)
+  net.rs                        # IP parsing, formatting (consolidated)
+  filter.rs                     # EventFilter trait + SelfTrafficFilter
+  shutdown.rs                   # CancellationToken + JoinSet coordinator
+  probe_loader.rs               # eBPF lifecycle
+  cgroup.rs                     # Cgroup resolution
+  grpc_server.rs                # gRPC service
+  pipeline/
+    mod.rs                      # EventPipeline orchestrator
+    source.rs                   # EventSource trait + RingBufSource
+    enricher.rs                 # Single enrichment path (IP-first, cgroup fallback)
+    processor.rs                # EventProcessor trait
+    exporter.rs                 # EventExporter trait + fanout
+  export/
+    mod.rs
+    grpc.rs                     # gRPC streaming exporter
+    log.rs                      # Debug log exporter
+  k8s/
+    mod.rs
+    watcher.rs                  # PodWatcher
+    pod_cache.rs                # PodCache
+  aggregator.rs                 # Flow aggregation (accepts pre-enriched events)
+```
+
+### Crate Dependency Graph
+
+```
+orb8-probes (no_std)
+    |
+    v
+orb8-common (no_std compatible)
+    |
+  +-+--------+
+  |          |
+  v          v
+orb8-util  orb8-proto
+  |          |
+  +--+--+    |
+  |  |  |    |
+  v  v  v    v
+ cli agent server
 ```
 
 ### Distribution
 
-orb8 crates are distributed via multiple channels:
-
 **crates.io** (Rust library/binary distribution):
-- `orb8` - Root crate re-exporting `orb8-common` and `orb8-cli` as optional features
 - `orb8-common` - Shared types between eBPF probes and userspace
-- `orb8-cli` - CLI command definitions (library)
+- `orb8-cli` - CLI tool (installs `orb8` binary)
 - `orb8-agent` - Node agent binary (`cargo install orb8-agent`, Linux-only)
 
 **Not on crates.io**:
 - `orb8-probes` - eBPF bytecode compiled for `bpfel-unknown-none` target; embedded in `orb8-agent` binary
-- `orb8-server` - Central API server (stub, Phase 4)
-- `orb8-proto` - gRPC protocol definitions (stub, Phase 4)
+- `orb8-server` - Central API server (stub, Phase 7)
+- `orb8-proto` - gRPC protocol definitions
 
-**Container Images** (planned):
+**Container Images** (Phase 4):
 - `ghcr.io/ignoramuss/orb8-agent` - For Kubernetes DaemonSet deployment
-- `ghcr.io/ignoramuss/orb8-server` - For central server deployment
+- `ghcr.io/ignoramuss/orb8-server` - For central server deployment (Phase 7)
 
 **Usage**:
 ```bash
-# Add as Rust dependency
-cargo add orb8
+# Install CLI binary
+cargo install orb8-cli
 
 # Install agent binary (Linux only)
 cargo install orb8-agent
 
-# Kubernetes deployment (future)
-kubectl apply -f https://raw.githubusercontent.com/Ignoramuss/orb8/main/deploy/
+# Kubernetes deployment (Phase 4)
+kubectl apply -k deploy/
 ```
 
 ---
 
-## Operating Modes
+## Operating Mode
 
-orb8 supports two distinct operating modes, selectable via CLI flags.
+orb8 operates as a **DaemonSet-based platform** providing always-on cluster-wide observability.
 
-### Mode 1: Cluster Mode (Platform)
+### Current: Single-Node Agent Mode
 
-**Use case**: Continuous, cluster-wide observability
+**Use case**: Per-node network visibility via direct agent connection
 
 ```bash
-# Install infrastructure (one-time)
-kubectl apply -f deploy/
-
-# Use CLI to query
-orb8 --mode=cluster query pods --namespace ml-training
-orb8 --mode=cluster trace network --pod nginx-xyz --duration 60s
+# Connect CLI directly to an agent
+orb8 --agent <node-ip>:9090 status
+orb8 --agent <node-ip>:9090 flows
+orb8 --agent <node-ip>:9090 trace network
 ```
 
 **Architecture**:
 - DaemonSet runs `orb8-agent` on every node
-- Central `orb8-server` aggregates data
-- CLI connects to server via gRPC
-- Always-on monitoring with historical data
+- CLI connects directly to individual agents via gRPC
+- Each agent provides visibility into its own node
 
-**Deployment**:
-```yaml
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: orb8-agent
-spec:
-  selector:
-    matchLabels:
-      app: orb8-agent
-  template:
-    spec:
-      hostNetwork: true
-      hostPID: true
-      containers:
-      - name: agent
-        image: orb8/agent:latest
-        securityContext:
-          privileged: true
-          capabilities:
-            add: ["SYS_ADMIN", "SYS_RESOURCE", "NET_ADMIN"]
-```
+### Future: Cluster Mode (Phase 7)
 
-### Mode 2: Standalone Mode (On-Demand)
-
-**Use case**: Ad-hoc tracing without cluster installation
+**Use case**: Cluster-wide observability via central server
 
 ```bash
-# No installation required
-orb8 --mode=standalone trace network --node worker-1 --duration 30s
+# Install infrastructure
+kubectl apply -k deploy/
+
+# Query cluster-wide
+orb8 flows --namespace ml-training
+orb8 trace network --pod nginx-xyz
 ```
 
 **Architecture**:
-- CLI directly SSH/kubectl-exec to target node
-- Temporarily loads eBPF probes
-- Collects data locally
-- Cleans up on exit
-- No DaemonSet or server required
-
-**How it works**:
-1. CLI uses `kubectl exec` or SSH to access node
-2. Transfers probe binaries to `/tmp/orb8/`
-3. Loads probes using aya
-4. Streams events back to CLI
-5. Unloads probes and cleans up
+- DaemonSet runs `orb8-agent` on every node
+- Central `orb8-server` discovers agents, routes queries, aggregates results
+- CLI connects to server via gRPC
 
 ---
 
@@ -429,30 +421,35 @@ All probes are written in **Rust** using `aya-bpf` and compiled to eBPF bytecode
 
 **Critical Problem**: eBPF programs run in kernel space and have no direct knowledge of Kubernetes pods. How do we map kernel events to specific pods?
 
-**Solution**: cgroup v2 ID extraction + user-space mapping
+**Solution**: Dual enrichment strategy depending on the eBPF program type.
 
-### Step 1: Extract cgroup ID in eBPF
+### Strategy 1: IP-Based Enrichment (Network Probes)
 
-eBPF probes call `bpf_get_current_cgroup_id()` helper to obtain a unique 64-bit cgroup ID for the task.
+TC classifiers **cannot** call `bpf_get_current_cgroup_id()` because they execute in the network stack context (softirq), not in a process context. Network events always have `cgroup_id=0`.
 
-### Step 2: Map cgroup ID to Pod (User-Space)
+Instead, the agent uses **IP-based pod lookup**:
 
-Agent's CgroupResolver:
-- Constructs cgroup filesystem path from pod UID and container ID
-- Handles runtime-specific path formats (containerd, CRI-O, Docker)
-- Supports all QoS classes (Guaranteed, Burstable, BestEffort)
-- Returns cgroup inode number as unique identifier
+1. **PodWatcher** watches K8s API for pod events, extracts pod IPs
+2. **PodCache** maintains a `pod_ip (u32) → PodMetadata` map
+3. On each event, the agent matches `src_ip` or `dst_ip` against the cache
+4. Direction-aware attribution: ingress → dst IP is the pod, egress → src IP is the pod
 
-Agent's PodWatcher:
-- Watches Kubernetes API for pod events
-- Extracts pod UID, namespace, name, and container IDs
-- Resolves cgroup ID for each container
-- Maintains shared eBPF map: `cgroup_id → PodMetadata`
-- Implements reconnection on watch failure
+### Strategy 2: Cgroup-Based Enrichment (Tracepoint Probes)
 
-### Step 3: Enrich Events with Pod Metadata
+Tracepoint-attached probes (syscall monitoring, Phase 8) execute in process context where `bpf_get_current_cgroup_id()` IS available.
 
-EventEnricher looks up cgroup ID in the metadata map and attaches namespace, pod name, and container name to each event.
+1. **eBPF probe** extracts cgroup ID via `bpf_get_current_cgroup_id()`
+2. **CgroupResolver** maps pod UID + container ID → cgroup inode via filesystem
+3. **PodCache** maintains a `cgroup_id (u64) → PodMetadata` map
+4. Agent enriches events by looking up the cgroup ID
+
+### PodWatcher Details
+
+- Watches Kubernetes API for pod events (create, update, delete)
+- Extracts pod UID, namespace, name, container IDs, and pod IP
+- Resolves cgroup ID for each container (when filesystem is accessible)
+- Populates both IP and cgroup maps in PodCache
+- Implements reconnection with exponential backoff on watch failure
 
 ### Cgroup Hierarchy
 
@@ -594,29 +591,36 @@ Two sub-approaches under active research:
         ↓
 2. [KERNEL] TC hook triggers network_probe (eBPF)
         ↓
-3. [KERNEL] Probe extracts: cgroup_id=12345, src_ip, dst_ip, bytes
+3. [KERNEL] Probe extracts: src_ip, dst_ip, ports, protocol, packet_len
         ↓
-4. [KERNEL] Writes to FLOW_EVENTS ring buffer (shared memory)
+4. [KERNEL] Writes NetworkFlowEvent to FLOW_EVENTS ring buffer
         ↓
-5. [USER] EventCollector.poll_events() reads ring buffer (async loop)
+5. [USER] Main loop polls ring buffer (100ms interval)
         ↓
 6. [USER] Deserializes into NetworkFlowEvent struct
         ↓
-7. [USER] EventEnricher looks up cgroup_id=12345 in POD_METADATA map
+7. [USER] Filters self-traffic (agent gRPC port on local IPs)
         ↓
-8. [USER] Finds: pod=nginx-xyz, namespace=production, container=nginx
+8. [USER] IP-based enrichment: match src/dst IP against PodCache
         ↓
-9. [USER] Creates EnrichedNetworkFlow with K8s context
+9. [USER] Direction-aware attribution:
+    - ingress: dst IP is the local pod
+    - egress: src IP is the local pod
         ↓
-10. [USER] Aggregator updates time-series:
-    - network_bytes{pod="nginx-xyz",namespace="production",direction="egress"} += bytes
+10. [USER] Aggregator updates flow stats with pre-enriched (namespace, pod_name)
+    [USER] Broadcasts enriched NetworkEvent to gRPC stream subscribers
         ↓
-11. [USER] PrometheusExporter exposes metric at :9091/metrics
-    [USER] Agent gRPC API makes available for queries at :9090
+11. [USER] Agent gRPC API serves QueryFlows and StreamEvents at :9090
         ↓
-12. [EXTERNAL] Prometheus scrapes metrics
-    [EXTERNAL] CLI queries via gRPC → API Server → Agent
+12. [EXTERNAL] CLI queries via gRPC → Agent
+    [EXTERNAL] Prometheus scrapes /metrics (Phase 5)
 ```
+
+> **Note**: TC classifiers cannot call `bpf_get_current_cgroup_id()`, so
+> `cgroup_id` is always 0 in network events. Enrichment relies entirely on
+> IP-based pod lookup. Cgroup-based enrichment will be used for tracepoint
+> probes (syscall monitoring, Phase 8) where `bpf_get_current_cgroup_id()`
+> is available.
 
 ### Memory Layout
 
@@ -904,27 +908,6 @@ subjects:
   namespace: orb8-system
 ```
 
-### Standalone Mode Execution
-
-No installation required:
-
-```bash
-# CLI uses kubectl exec to access node
-orb8 --mode=standalone trace network \
-  --node worker-1 \
-  --namespace production \
-  --pod nginx-xyz \
-  --duration 30s
-```
-
-**Under the hood**:
-1. CLI finds node running target pod: `kubectl get pod nginx-xyz -o jsonpath='{.spec.nodeName}'`
-2. Creates temporary pod on that node with host privileges
-3. Transfers probe binaries
-4. Loads probes, collects events
-5. Streams results back to CLI
-6. Cleans up temporary pod
-
 ---
 
 ## Security Model
@@ -1135,18 +1118,18 @@ For high-traffic production clusters (>10Gbps per node):
 
 ## Current Implementation Status
 
-This section documents what is actually implemented as of Phase 2 (v0.0.2).
+This section documents what is actually implemented as of Phase 3.5 (v0.0.4).
 
 ### Implemented Components
 
-| Component | Status | Files Implemented |
-|-----------|--------|-------------------|
-| `orb8-probes` | Phase 2 | `src/network_probe.rs` - Full IPv4/TCP/UDP/ICMP packet parsing, ring buffer |
-| `orb8-common` | Phase 2 | `src/lib.rs` - `NetworkFlowEvent`, `PacketEvent`, protocol/direction constants |
-| `orb8-agent` | Phase 2 | `main.rs`, `lib.rs`, `probe_loader.rs`, `aggregator.rs`, `grpc_server.rs`, `k8s_watcher.rs`, `pod_cache.rs`, `cgroup.rs` |
-| `orb8-proto` | Phase 2 | `src/lib.rs`, `build.rs`, `proto/orb8.proto` - gRPC service definitions |
-| `orb8-server` | Stub | `src/lib.rs` - placeholder (Phase 4) |
-| `orb8-cli` | Phase 2 | `src/lib.rs`, `src/main.rs` - Basic structure |
+| Component | Status | Key Files |
+|-----------|--------|-----------|
+| `orb8-probes` | Phase 3 | `src/network_probe.rs` - Full IPv4/TCP/UDP/ICMP packet parsing, ring buffer, drop counter |
+| `orb8-common` | Phase 3 | `src/lib.rs` - `NetworkFlowEvent`, protocol/direction constants, LE assertion |
+| `orb8-agent` | Phase 3.5 | `main.rs`, `lib.rs`, `net.rs`, `probe_loader.rs`, `aggregator.rs`, `grpc_server.rs`, `k8s_watcher.rs`, `pod_cache.rs`, `cgroup.rs` |
+| `orb8-proto` | Phase 3 | `src/lib.rs`, `build.rs`, `proto/orb8.proto` - QueryFlows, StreamEvents, GetStatus |
+| `orb8-server` | Stub | `src/lib.rs` - placeholder (Phase 7) |
+| `orb8-cli` | Phase 3 | `src/main.rs` - status, flows, trace network commands |
 
 ### Phase Completion
 
@@ -1156,36 +1139,35 @@ This section documents what is actually implemented as of Phase 2 (v0.0.2).
   - Probe loading and lifecycle management
   - Ring buffer kernel-to-userspace communication
   - Pre-flight system checks (kernel version, BTF, capabilities)
-- **Phase 2** (Container Identification): ✅ Complete (MVP)
+- **Phase 2** (Container Identification): ✅ Complete
   - Kubernetes pod watcher (kube-rs)
-  - Pod cache with cgroup ID mapping
-  - Event enrichment with pod metadata
+  - Pod cache with IP-based and cgroup-based lookup
   - gRPC API server (port 9090)
   - Flow aggregation with 30s expiration
-
-  > **Note**: `bpf_get_current_cgroup_id()` not available for TC classifiers.
-  > Using K8s API-based enrichment with cgroup_id=0 fallback.
-
-- **Phase 3** (Network MVP): 🔄 In Progress (v0.0.3)
-  - ✅ Full packet parsing (5-tuple extraction)
-  - ✅ gRPC QueryFlows, StreamEvents, GetStatus
-  - ✅ CLI trace network command
-  - ✅ IP-based pod enrichment tested with kind cluster
-  - ✅ Smart interface discovery (eth0, cni0, docker0, br-*)
-  - ⏳ Public release
-
-  > **v0.0.3 Note**: Fixed IP byte order in pod cache lookup. TC probes read IPs
-  > with first octet in LSB position; `parse_ipv4()` now uses `from_le_bytes()`.
+- **Phase 3** (Network MVP): ✅ Complete (v0.0.3)
+  - Full packet parsing (5-tuple extraction)
+  - gRPC QueryFlows, StreamEvents, GetStatus
+  - CLI trace network command
+  - IP-based pod enrichment tested with kind cluster
+  - Smart interface discovery (eth0, cni0, docker0, br-*)
+  - Ring buffer drop counter (EVENTS_DROPPED eBPF map)
+  - Self-traffic filter (agent gRPC port excluded)
+- **Phase 3.5** (Structural Cleanup): 🔄 In Progress (v0.0.4)
+  - Fixed double-enrichment bug (aggregator now accepts pre-resolved pod identity)
+  - Removed dead root `src/` directory and converted to virtual workspace
+  - Consolidated IP parsing/formatting into `net.rs`
+  - Cleaned up unused types (EnrichedEvent, dead events_dropped field)
 
 ### What's Not Yet Implemented
 
-The following components exist in the target architecture but are not yet implemented:
-
-- `orb8-probes/src/syscall_probe.rs` (Phase 6)
-- `orb8-probes/src/gpu_probe.rs` (Phase 7)
-- `orb8-agent/src/prom_exporter.rs` (Phase 5)
-- `orb8-server` full implementation (Phase 4)
-- `orb8-cli` full trace commands (Phase 3)
+- `deploy/` directory (Dockerfile, K8s manifests) - Phase 4
+- `orb8-agent/src/config.rs` (env var configuration) - Phase 4
+- Prometheus `/metrics` endpoint - Phase 5
+- `orb8-util/` crate (shared userspace utilities) - Phase 6
+- Pipeline architecture (`pipeline/`, `export/`, `filter.rs`, `event.rs`) - Phase 6
+- `orb8-server` full implementation - Phase 7
+- `orb8-probes/src/syscall_probe.rs` - Phase 8
+- `orb8-probes/src/gpu_probe.rs` - Phase 9
 
 ---
 
@@ -1210,6 +1192,6 @@ The following components exist in the target architecture but are not yet implem
 
 ---
 
-**Document Version**: 1.3
-**Last Updated**: 2025-12-11
+**Document Version**: 2.0
+**Last Updated**: 2026-02-13
 **Authors**: orb8 maintainers

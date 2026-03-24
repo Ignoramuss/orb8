@@ -1,68 +1,22 @@
-[package]
-name = "orb8"
-version = "0.0.3"
-edition = "2021"
-rust-version = "1.75"
-authors = ["Ignoramuss"]
-license = "Apache-2.0"
-description = "eBPF-powered observability toolkit for Kubernetes with GPU telemetry"
-repository = "https://github.com/Ignoramuss/orb8"
-homepage = "https://github.com/Ignoramuss/orb8"
-documentation = "https://docs.rs/orb8"
-readme = "README.md"
-keywords = ["kubernetes", "ebpf", "observability", "gpu", "monitoring"]
-categories = ["command-line-utilities", "development-tools::profiling", "network-programming"]
+[workspace]
+resolver = "2"
+members = [
+    "orb8-probes",
+    "orb8-common",
+    "orb8-agent",
+    "orb8-server",
+    "orb8-cli",
+    "orb8-proto",
+]
 
-[dependencies]
-# Async runtime
-tokio = { version = "1.35", features = ["full"] }
-
-# Kubernetes client
-kube = { version = "0.88", features = ["runtime", "derive"] }
-k8s-openapi = { version = "0.21", features = ["latest"] }
-
-# CLI and TUI
-clap = { version = "4.4", features = ["derive", "cargo"] }
-ratatui = "0.29"
-crossterm = "0.27"
-
-# Metrics and observability
-prometheus = { version = "0.14", features = ["process"] }
-
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-serde_yaml = "0.9"
-
-# Error handling
-anyhow = "1.0"
-thiserror = "2.0"
-
-# Logging
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# Utilities
-futures = "0.3"
-bytes = "1.5"
-async-trait = "0.1"
-
-# Sub-crates (optional, re-exported)
-orb8-common = { version = "0.0.3", path = "orb8-common", optional = true }
-orb8-cli = { version = "0.0.3", path = "orb8-cli", optional = true }
-
-[features]
-default = ["common", "cli"]
-common = ["dep:orb8-common"]
-cli = ["dep:orb8-cli"]
-
-[dev-dependencies]
-criterion = "0.5"
-tempfile = "3.8"
-
-[[bin]]
-name = "orb8"
-path = "src/main.rs"
+# Exclude eBPF crate from default build to prevent cargo from building it for host
+default-members = [
+    "orb8-common",
+    "orb8-agent",
+    "orb8-server",
+    "orb8-cli",
+    "orb8-proto",
+]
 
 [profile.release]
 opt-level = 3
@@ -75,34 +29,3 @@ panic = "abort"
 opt-level = 0
 debug = true
 panic = "abort"
-
-[workspace]
-members = [
-    ".",
-    "orb8-probes",
-    "orb8-common",
-    "orb8-agent",
-    "orb8-server",
-    "orb8-cli",
-    "orb8-proto",
-]
-
-# Exclude eBPF crate from default build to prevent cargo from building it for host
-default-members = [
-    ".",
-    "orb8-common",
-    "orb8-agent",
-    "orb8-server",
-    "orb8-cli",
-    "orb8-proto",
-]
-
-# Metadata for docs.rs
-[package.metadata.docs.rs]
-all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
-
-# Linux-only dependencies (eBPF)
-[target.'cfg(target_os = "linux")'.dependencies]
-aya = { version = "0.13", features = ["async_tokio"] }
-aya-log = "0.2"

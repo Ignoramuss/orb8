@@ -1,8 +1,11 @@
 //! Kubernetes pod watcher for tracking pod lifecycle events
 //!
-//! Watches all pods in the cluster and maintains the cgroup ID -> pod metadata mapping.
+//! Watches all pods in the cluster and maintains IP-based and cgroup-based pod metadata mappings.
+//! IP-based mapping is the primary enrichment path for TC classifier events.
+//! Cgroup-based mapping is populated for future use by syscall tracepoint probes (Phase 8).
 
 use crate::cgroup::CgroupResolver;
+use crate::net::parse_ipv4;
 use crate::pod_cache::{PodCache, PodMetadata};
 use anyhow::{Context, Result};
 use futures::{StreamExt, TryStreamExt};
@@ -201,47 +204,5 @@ impl PodWatcher {
             self.cache.remove_pod(pod_uid);
             debug!("Removed pod {}/{} from cache", namespace, name);
         }
-    }
-}
-
-/// Parse an IPv4 address string to u32
-/// Format: first octet in LSB position (consistent with how eBPF probe reads IPs)
-fn parse_ipv4(ip_str: &str) -> Option<u32> {
-    let parts: Vec<u8> = ip_str.split('.').filter_map(|p| p.parse().ok()).collect();
-
-    if parts.len() == 4 {
-        // Store with first octet in LSB (same as eBPF reads from packets)
-        Some(u32::from_le_bytes([parts[0], parts[1], parts[2], parts[3]]))
-    } else {
-        None
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_ipv4_byte_order() {
-        // 10.0.0.5: first octet (10) in LSB position
-        // [10, 0, 0, 5] as little-endian = 0x0500000A
-        assert_eq!(parse_ipv4("10.0.0.5"), Some(0x0500000A));
-
-        // 192.168.1.100: [192, 168, 1, 100] as little-endian = 0x6401A8C0
-        assert_eq!(parse_ipv4("192.168.1.100"), Some(0x6401A8C0));
-
-        // 172.18.0.2: [172, 18, 0, 2] as little-endian = 0x020012AC
-        assert_eq!(parse_ipv4("172.18.0.2"), Some(0x020012AC));
-
-        // Loopback 127.0.0.1
-        assert_eq!(parse_ipv4("127.0.0.1"), Some(0x0100007F));
-    }
-
-    #[test]
-    fn test_parse_ipv4_invalid() {
-        assert_eq!(parse_ipv4(""), None);
-        assert_eq!(parse_ipv4("10.0.0"), None);
-        assert_eq!(parse_ipv4("not.an.ip.addr"), None);
-        assert_eq!(parse_ipv4("256.0.0.1"), None);
     }
 }

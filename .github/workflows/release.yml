@@ -25,9 +25,9 @@ jobs:
 
       - name: Validate version matches
         run: |
-          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          CARGO_VERSION=$(grep '^version' orb8-cli/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           if [ "$CARGO_VERSION" != "${{ steps.tag.outputs.version }}" ]; then
-            echo "Tag version (${{ steps.tag.outputs.version }}) doesn't match Cargo.toml ($CARGO_VERSION)"
+            echo "Tag version (${{ steps.tag.outputs.version }}) doesn't match orb8-cli/Cargo.toml ($CARGO_VERSION)"
             exit 1
           fi
 
@@ -64,8 +64,6 @@ jobs:
           cargo publish -p orb8-cli || true
           sleep 15
           cargo publish -p orb8-agent || true
-          sleep 15
-          cargo publish -p orb8
 
   # Create GitHub Release
   release:

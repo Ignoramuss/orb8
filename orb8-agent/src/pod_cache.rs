@@ -99,57 +99,6 @@ impl Default for PodCache {
     }
 }
 
-/// Enriched event with pod metadata resolved from cgroup ID
-#[derive(Debug, Clone)]
-pub struct EnrichedEvent {
-    pub timestamp_ns: u64,
-    pub namespace: String,
-    pub pod_name: String,
-    pub container_name: String,
-    pub src_ip: u32,
-    pub dst_ip: u32,
-    pub src_port: u16,
-    pub dst_port: u16,
-    pub protocol: u8,
-    pub direction: u8,
-    pub packet_len: u16,
-}
-
-impl EnrichedEvent {
-    /// Create an enriched event from a raw network flow event and pod metadata
-    pub fn from_flow(
-        event: &orb8_common::NetworkFlowEvent,
-        metadata: Option<&PodMetadata>,
-    ) -> Self {
-        let (namespace, pod_name, container_name) = match metadata {
-            Some(m) => (
-                m.namespace.clone(),
-                m.pod_name.clone(),
-                m.container_name.clone(),
-            ),
-            None => (
-                "unknown".to_string(),
-                format!("cgroup-{}", event.cgroup_id),
-                "unknown".to_string(),
-            ),
-        };
-
-        Self {
-            timestamp_ns: event.timestamp_ns,
-            namespace,
-            pod_name,
-            container_name,
-            src_ip: event.src_ip,
-            dst_ip: event.dst_ip,
-            src_port: event.src_port,
-            dst_port: event.dst_port,
-            protocol: event.protocol,
-            direction: event.direction,
-            packet_len: event.packet_len,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
