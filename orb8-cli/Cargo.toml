@@ -16,7 +16,7 @@ clap = { version = "4.5", features = ["derive"] }
 anyhow = "1.0"
 thiserror = "2.0"
 tokio = { version = "1.41", features = ["full"] }
-tonic = "0.12"
+tonic = "0.14"
 orb8-proto = { version = "0.0.3", path = "../orb8-proto" }
 futures = "0.3"
 chrono = "0.4"

@@ -12,7 +12,7 @@ keywords = ["grpc", "protobuf", "ebpf", "observability"]
 categories = ["network-programming"]
 
 [dependencies]
-tonic = "0.12"
+tonic = "0.14"
 prost = "0.13"
 prost-types = "0.13"
 
