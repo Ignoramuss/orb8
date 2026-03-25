@@ -1,3 +1,24 @@
+[package]
+name = "orb8"
+version = "0.0.5"
+edition = "2021"
+license = "Apache-2.0"
+description = "eBPF-powered observability toolkit for Kubernetes with GPU telemetry"
+repository = "https://github.com/Ignoramuss/orb8"
+homepage = "https://github.com/Ignoramuss/orb8"
+readme = "README.md"
+keywords = ["kubernetes", "ebpf", "observability", "gpu", "monitoring"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+orb8-cli = { version = "0.0.5", path = "orb8-cli" }
+tokio = { version = "1.41", features = ["full"] }
+anyhow = "1.0"
+
+[[bin]]
+name = "orb8"
+path = "src/main.rs"
+
 [workspace]
 resolver = "2"
 members = [
