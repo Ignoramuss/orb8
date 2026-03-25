@@ -8,7 +8,7 @@ orb8 is an eBPF-powered observability toolkit for Kubernetes with first-class GP
 
 **Architecture**: Dual-mode platform supporting both cluster-wide monitoring (DaemonSet) and standalone on-demand tracing.
 
-**Current Status**: Phase 3 (Network Tracing MVP) - IP-based pod enrichment, eBPF TC classifiers, gRPC API.
+**Current Status**: Phase 3.5 (Structural Cleanup) - IP-based pod enrichment, eBPF TC classifiers, gRPC API.
 
 ## Monorepo Structure
 
@@ -16,15 +16,14 @@ orb8 is organized as a **Cargo workspace** with multiple crates:
 
 ```
 orb8/
-├── Cargo.toml                    # Workspace root
+├── Cargo.toml                    # Virtual workspace root (no root package)
 ├── orb8-probes/                  # eBPF probes (Rust, kernel space)
 ├── orb8-common/                  # Shared types between kernel/user space
 ├── orb8-agent/                   # Node agent (DaemonSet)
-├── orb8-server/                  # Central API server
+├── orb8-server/                  # Central API server (stub)
 ├── orb8-cli/                     # CLI tool
 ├── orb8-proto/                   # gRPC protocol definitions
-├── tests/                        # Integration tests
-├── deploy/                       # Kubernetes manifests
+├── scripts/                      # Dev environment setup scripts
 └── docs/
     ├── ARCHITECTURE.md           # Detailed technical design
     └── ROADMAP.md                # Phase-based implementation plan
@@ -33,14 +32,16 @@ orb8/
 ### Workspace Commands
 
 ```bash
-# Build all crates
-cargo build --workspace
+# Build all crates (excludes orb8-probes on non-Linux)
+cargo build
 
 # Build specific crate
 cargo build -p orb8-agent
 
-# Test all crates
-cargo test --workspace
+# Test (uses default-members, excludes orb8-probes which is #![no_main])
+cargo test
+
+# NEVER use cargo test --workspace (orb8-probes will fail linking)
 
 # Run specific binary
 cargo run -p orb8-cli -- --help
@@ -76,14 +77,13 @@ cargo build --release                    # Release build
 cargo build -p orb8-probes              # Build eBPF probes only
 
 # Test
-cargo test                              # All tests
+cargo test                              # All tests (default-members)
 cargo test --lib                        # Unit tests only
-cargo test --test integration_test      # Integration tests
 cargo test -p orb8-agent                # Test specific crate
 
 # Run
 cargo run -p orb8-cli -- --help
-cargo run -p orb8-agent
+sudo cargo run -p orb8-agent            # Requires root for eBPF
 ```
 
 ### Code Quality
@@ -125,10 +125,12 @@ orb8 consists of **eBPF probes** (kernel space) and **Rust services** (user spac
 
 Probes:
 - `network_probe.rs` - Network flow tracing (TC classifier, ingress/egress)
-- `syscall_probe.rs` - System call monitoring (tracepoint)
-- `gpu_probe.rs` - GPU telemetry (kprobe/uprobe)
 
-**Key concept**: Probes extract **cgroup ID** to identify which container/pod an event belongs to.
+Planned (not yet implemented):
+- Syscall monitoring (tracepoint) - Phase 8
+- GPU telemetry (kprobe/uprobe) - Phase 9
+
+**Key concept**: TC classifiers run in network/softirq context and cannot access cgroup IDs. Pod identification for network events uses **IP-based enrichment** from the Kubernetes API. Future tracepoint probes (syscall monitoring) will have process context and can use cgroup-based identification.
 
 ### User-Space Components
 
@@ -140,18 +142,19 @@ Probes:
 - Load eBPF probes into kernel
 - Poll ring buffers for events
 - Watch Kubernetes API for pod metadata
-- Map cgroup IDs → pods
-- Aggregate metrics
+- Map pod IPs → pod metadata (primary enrichment path)
+- Map cgroup IDs → pod metadata (for future tracepoint probes)
+- Aggregate flow metrics
 - Expose gRPC API (:9090)
-- Export Prometheus metrics (:9091)
 
 **Key files**:
-- `probe_loader.rs` - Manages eBPF probe lifecycle
-- `collector.rs` - Polls ring buffers
-- `k8s/watcher.rs` - Watches pods, maps cgroups
-- `aggregator.rs` - Time-series aggregation
-- `api_server.rs` - gRPC service
-- `prom_exporter.rs` - Prometheus /metrics endpoint
+- `probe_loader.rs` - Manages eBPF probe lifecycle, ring buffer polling
+- `k8s_watcher.rs` - Watches pods, populates IP and cgroup caches
+- `pod_cache.rs` - Dual-indexed cache (by IP and by cgroup ID)
+- `aggregator.rs` - Flow aggregation with pre-resolved pod identity
+- `grpc_server.rs` - gRPC service (QueryFlows, StreamEvents, GetStatus)
+- `net.rs` - IP formatting/parsing, self-traffic filtering
+- `cgroup.rs` - Cgroup ID resolution from container IDs
 
 #### orb8-server (Central Control Plane)
 
@@ -186,9 +189,8 @@ orb8 --mode=standalone trace network --node worker-1 --duration 30s
 **Purpose**: Types shared between eBPF (kernel) and user-space
 
 **Key types**:
-- `NetworkFlowEvent` - Network packet event
-- `SyscallEvent` - System call event
-- `GpuEvent` - GPU telemetry event
+- `NetworkFlowEvent` - Network packet event (32 bytes, 8-byte aligned)
+- `PacketEvent` - Legacy simple packet event (kept for backward compat)
 
 **Important**: Must be `#[repr(C)]` and `no_std` compatible for eBPF.
 
@@ -209,30 +211,35 @@ service OrbitService {
 
 ## Key Technical Concepts
 
-### Container Identification (Critical)
+### Pod Identification
 
 **Problem**: eBPF programs run in kernel and don't know about Kubernetes pods.
 
-**Solution**: cgroup v2 ID mapping
+**Two enrichment strategies** depending on probe type:
 
-1. **eBPF side**: Extract cgroup ID via `bpf_get_current_cgroup_id()`
-2. **User-space side**:
-   - Watch Kubernetes API for pods
-   - Resolve pod UID + container ID → cgroup inode
-   - Maintain map: `cgroup_id → PodMetadata`
-3. **Enrichment**: Look up cgroup ID to add namespace, pod name, container name to events
+**1. IP-based enrichment (primary, used by TC classifiers)**:
+- TC hooks run in network/softirq context — no process context, `bpf_get_current_cgroup_id()` returns 0
+- Agent watches K8s API and maps pod IPs → pod metadata
+- TC probe extracts src/dst IPs from packets → agent looks up pod by IP
+- Works for all pod traffic (every pod gets a unique IP from the CNI)
 
-### Data Flow
+**2. Cgroup-based enrichment (future, for tracepoint probes)**:
+- Tracepoints run in process context — `bpf_get_current_cgroup_id()` works
+- Agent resolves pod UID + container ID → cgroup inode
+- Maintains map: `cgroup_id → PodMetadata`
+- Will be used for syscall monitoring (Phase 8)
+
+### Network Data Flow
 
 ```
-1. [KERNEL] Event occurs (packet, syscall, GPU operation)
-2. [KERNEL] eBPF probe extracts cgroup_id + event data
-3. [KERNEL] Writes to ring buffer (shared memory)
-4. [USER] Agent polls ring buffer
-5. [USER] Looks up cgroup_id → pod metadata
-6. [USER] Enriches event with K8s context
-7. [USER] Aggregates into metrics
-8. [USER] Exports to Prometheus or serves via gRPC
+1. [KERNEL] Packet arrives/leaves on network interface
+2. [KERNEL] TC classifier extracts 5-tuple (IPs, ports, protocol) + timestamp
+3. [KERNEL] Sets cgroup_id=0 (unavailable in TC context)
+4. [KERNEL] Writes NetworkFlowEvent to ring buffer
+5. [USER] Agent polls ring buffer every 100ms
+6. [USER] Filters self-traffic (agent's own gRPC connections)
+7. [USER] Looks up src_ip and dst_ip in pod cache (IP-based enrichment)
+8. [USER] Passes enriched event to aggregator and gRPC broadcast
 ```
 
 ### Communication Channels
@@ -279,29 +286,34 @@ make shell  # Enter VM
 ### Unit Tests
 
 ```bash
-cargo test --lib                    # Test all library code
-cargo test -p orb8-agent --lib      # Test specific crate
+cargo test                          # All tests via default-members (excludes orb8-probes)
+cargo test -p orb8-agent            # Test specific crate
+make test                           # Run cargo test inside Lima VM (from macOS)
 ```
 
-### E2E Tests
+### Smoke Test
 
 ```bash
-make e2e-test                       # Full DaemonSet deployment test with kind
-make smoke-test                     # Quick probe loading test (no k8s)
+make smoke-test                     # Probe loading + traffic capture (no k8s)
 ```
 
-**Require**: Linux (or Lima VM on macOS), Docker, kind, kubectl
+Builds agent, runs with sudo, generates traffic, asserts events are captured and flows appear. No Kubernetes required — all traffic shows as "external/unknown" (expected without pod watcher).
 
-### eBPF Probe Tests
-
-**Require**: Root privileges and Linux
+### E2E Test
 
 ```bash
-# Inside VM
-sudo cargo test -p orb8-probes
+make e2e-test                       # Full kind cluster test with pod enrichment
 ```
 
-See **Validation & Testing** section for detailed verification steps.
+Creates a 2-node kind cluster, builds Docker image, deploys DaemonSet with RBAC, generates traffic, and asserts flows contain real pod names (not "external/unknown"). Requires Docker and kind.
+
+### Container Build
+
+```bash
+make docker-build                   # Build orb8-agent:test image (uses local binary)
+```
+
+Uses the `local` Dockerfile target which copies the pre-built binary. For CI, use the default target which does a full multi-stage build.
 
 ## Important Architectural Constraints
 
@@ -318,14 +330,16 @@ Development follows **phase-based approach** without strict timelines:
 - **Phase 0**: ✅ Foundation & monorepo (COMPLETE)
 - **Phase 1**: ✅ eBPF Infrastructure (COMPLETE)
 - **Phase 2**: ✅ Container Identification (COMPLETE)
-- **Phase 3**: 🔧 Network Tracing MVP (IN PROGRESS)
-- **Phase 4**: Cluster Mode (DaemonSet + central server)
-- **Phase 5**: Metrics & Observability (Prometheus, Grafana)
-- **Phase 6**: Syscall Monitoring
-- **Phase 7**: GPU Telemetry
-- **Phase 8**: Advanced Features (TUI, standalone mode)
+- **Phase 3**: ✅ Network Tracing MVP (COMPLETE)
+- **Phase 3.5**: 🔧 Structural Cleanup (IN PROGRESS)
+- **Phase 4**: DaemonSet deployment (Dockerfile, kind, e2e tests)
+- **Phase 5**: Prometheus metrics
+- **Phase 6**: Event pipeline & JSON output
+- **Phase 7**: Cluster mode (orb8-server)
+- **Phase 8**: Syscall monitoring (validates cgroup enrichment)
+- **Phase 9**: GPU telemetry
 
-**Current**: Implementing Phase 3
+**Current**: Phase 3.5
 
 See `docs/ROADMAP.md` for granular implementation details.
 
@@ -420,7 +434,7 @@ grpcurl -plaintext localhost:9090 list
 **Fix**: Check probe code for loops, out-of-bounds access, or unsafe operations
 
 **Issue**: Events missing pod metadata
-**Fix**: Verify pod watcher is running and cgroup paths are correct
+**Fix**: Verify pod watcher is running and IP-based cache is populated
 
 **Issue**: Ring buffer full
 **Fix**: Increase buffer size or add sampling
@@ -439,23 +453,7 @@ When implementing new features:
 
 ### Container Build
 
-```bash
-make docker-build     # Builds agent with embedded probes, creates orb8-agent:test image
-```
-
-The Dockerfile only copies the agent binary. Probes are embedded at compile time via `orb8-agent/build.rs` using `aya_build::build_ebpf()`.
-
-### E2E Testing
-
-```bash
-make e2e-test         # Full test: build, deploy to kind, generate traffic, verify
-make smoke-test       # Quick test: probe loading only, no k8s
-```
-
-E2E test creates a 2-node kind cluster, deploys the DaemonSet, and verifies:
-1. Probes load successfully
-2. Probes attach to network interfaces
-3. Traffic events are captured with pod enrichment
+Probes are embedded at compile time via `orb8-agent/build.rs` using `aya_build::build_ebpf()` — the Dockerfile only copies the agent binary.
 
 ### Agent Startup Verification
 
@@ -491,16 +489,17 @@ Required volume mounts: `/sys` (ro), `/sys/kernel/debug` (rw), `/sys/fs/cgroup` 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `Failed to load probes` | Missing BTF or old kernel | Check `/sys/kernel/btf/vmlinux` exists, kernel >= 5.8 |
-| `Permission denied` on probe load | Missing capabilities | Verify DaemonSet securityContext has required caps |
+| `Permission denied` on probe load | Missing capabilities | Run with sudo or verify caps |
 | No traffic events | Probes not attached | Check logs for `Attached.*probe to` |
 | Events missing pod names | K8s watcher not synced | Check `Pod watcher initial sync complete` in logs |
-| `ErrImageNeverPull` in kind | Image not loaded | Run `kind load docker-image orb8-agent:test` |
+| Events show `external/unknown` | Traffic from non-pod IPs | Expected for host-level traffic (SSH, node processes) |
 
 ### Lima VM Notes
 
-- VM must be running for `make e2e-test` on macOS: `limactl start orb8-dev`
+- VM must be running for `make test`, `make build`, etc. on macOS
 - DNS issues after VM sleep: `limactl shell orb8-dev -- sudo systemctl restart systemd-resolved`
 - Project mounted at same path inside VM
+- `cargo clean` can hang on virtiofs mounts — use `rm -rf target` instead
 
 ## Code Style
 
