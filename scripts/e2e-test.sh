@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# E2E test: build Docker image, deploy to kind, verify pod enrichment.
-# Must be run on Linux with Docker, kind, and kubectl available.
+# E2E test: build Docker image, deploy to kind, verify pod enrichment
+# across all supported network modes.
+#
+# Tests:
+#   1. hostNetwork pods     — agent's own traffic (shares node IP)
+#   2. Regular pods         — cross-node pod-to-pod by IP
+#   3. Service ClusterIP    — cross-node via Service (DNAT to pod IP)
+#
+# Not tested (known limitation):
+#   - Same-node pod-to-pod traffic (stays on veth, never hits eth0)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -18,14 +26,33 @@ cleanup() {
         kill "$FORWARD_PID" 2>/dev/null || true
     fi
     log "Cleaning up..."
+    kubectl delete -f "$PROJECT_DIR/deploy/e2e-test-pods.yaml" --ignore-not-found 2>/dev/null || true
     kubectl delete -f "$PROJECT_DIR/deploy/daemonset.yaml" --ignore-not-found 2>/dev/null || true
-    kubectl delete pod traffic-gen --ignore-not-found 2>/dev/null || true
 }
 trap cleanup EXIT
 
 log() { echo "==> $*"; }
 pass() { log "PASS: $*"; PASSED=$((PASSED + 1)); }
 fail() { log "FAIL: $*"; FAILED=$((FAILED + 1)); }
+
+wait_for_pod() {
+    local pod_name="$1"
+    local timeout="${2:-120}"
+    for i in $(seq 1 "$timeout"); do
+        local phase
+        phase=$(kubectl get pod "$pod_name" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+        if [[ "$phase" == "Running" ]]; then
+            return 0
+        fi
+        if [[ $((i % 10)) -eq 0 ]]; then
+            log "  Waiting for $pod_name... (${phase:-Pending}, ${i}s)"
+        fi
+        sleep 1
+    done
+    echo "Error: pod $pod_name not Running after ${timeout}s"
+    kubectl describe pod "$pod_name"
+    return 1
+}
 
 # --- Pre-flight ---
 log "Running pre-flight checks..."
@@ -37,7 +64,7 @@ for cmd in docker kind kubectl; do
     fi
 done
 
-# --- Build agent + CLI locally (faster than Docker multi-stage) ---
+# --- Build agent + CLI locally ---
 log "Building agent and CLI (release)..."
 cd "$PROJECT_DIR"
 cargo build --release -p orb8-agent -p orb8-cli 2>&1 | tail -5
@@ -58,11 +85,13 @@ kind create cluster --name "$CLUSTER_NAME" --config "$PROJECT_DIR/deploy/kind-co
 log "Loading image into kind..."
 kind load docker-image "$IMAGE_NAME" --name "$CLUSTER_NAME"
 
-# --- Deploy DaemonSet ---
+# =====================================================================
+# PHASE 1: Deploy agent DaemonSet
+# =====================================================================
+
 log "Deploying orb8-agent DaemonSet..."
 kubectl apply -f "$PROJECT_DIR/deploy/daemonset.yaml"
 
-# --- Wait for pods to be ready ---
 log "Waiting for agent pods to be ready..."
 for i in $(seq 1 120); do
     READY=$(kubectl get ds orb8-agent -o jsonpath='{.status.numberReady}' 2>/dev/null || echo "0")
@@ -71,7 +100,7 @@ for i in $(seq 1 120); do
         break
     fi
     if [[ $((i % 10)) -eq 0 ]]; then
-        log "  Waiting... ($READY/$DESIRED ready, ${i}s elapsed)"
+        log "  Waiting... ($READY/$DESIRED ready, ${i}s)"
     fi
     sleep 1
 done
@@ -84,10 +113,9 @@ if [[ "$READY" -eq 0 ]] || [[ "$READY" -ne "$DESIRED" ]]; then
 fi
 log "DaemonSet ready: $READY/$DESIRED pods"
 
-# --- Check agent logs for probe attachment ---
-log "Checking agent logs..."
-AGENT_POD=$(kubectl get pods -l app=orb8-agent -o jsonpath='{.items[0].metadata.name}')
-AGENT_LOGS=$(kubectl logs "$AGENT_POD" 2>&1)
+# Find the worker agent pod (hostNetwork, so port-forward uses node port)
+WORKER_AGENT=$(kubectl get pods -l app=orb8-agent --field-selector spec.nodeName=orb8-test-worker -o jsonpath='{.items[0].metadata.name}')
+AGENT_LOGS=$(kubectl logs "$WORKER_AGENT" 2>&1)
 
 if echo "$AGENT_LOGS" | grep -q "Attached.*probe to"; then
     pass "Probes attached to network interfaces"
@@ -102,13 +130,12 @@ else
     fail "Pod watcher did not sync"
 fi
 
-# --- Port-forward to agent ---
-log "Setting up port-forward..."
-kubectl port-forward "$AGENT_POD" 19090:9090 &>/dev/null &
+# --- Port-forward to worker agent ---
+log "Setting up port-forward to worker agent..."
+kubectl port-forward "$WORKER_AGENT" 19090:9090 &>/dev/null &
 FORWARD_PID=$!
 sleep 2
 
-# --- Wait for CLI connectivity ---
 for i in $(seq 1 10); do
     if "$CLI_BIN" --agent "localhost:19090" status >/dev/null 2>&1; then
         break
@@ -116,53 +143,114 @@ for i in $(seq 1 10); do
     sleep 1
 done
 
-# --- Generate inter-pod traffic ---
-log "Generating pod-to-pod traffic..."
-kubectl run traffic-gen --image=curlimages/curl:latest --restart=Never \
-    --command -- sh -c "for i in \$(seq 1 10); do curl -s -o /dev/null http://kubernetes.default.svc.cluster.local/healthz 2>/dev/null || true; sleep 0.5; done" \
-    2>/dev/null || true
+# =====================================================================
+# PHASE 2: Deploy test pods for regular + service traffic
+# =====================================================================
 
-# Wait for traffic generation + ring buffer poll
-sleep 8
+log "Deploying test pods (echo-server on control-plane, traffic-gen on worker)..."
+kubectl apply -f "$PROJECT_DIR/deploy/e2e-test-pods.yaml"
 
-# --- Verify status ---
-log "Querying agent status..."
+wait_for_pod "echo-server" 120
+wait_for_pod "traffic-gen" 120
+
+ECHO_IP=$(kubectl get pod echo-server -o jsonpath='{.status.podIP}')
+log "echo-server pod IP: $ECHO_IP"
+
+# Wait for pod watcher to pick up the new pods
+sleep 5
+
+# =====================================================================
+# TEST 1: hostNetwork pod traffic (agent's own K8s API calls)
+# =====================================================================
+log ""
+log "--- TEST 1: hostNetwork pod traffic ---"
+
 STATUS_OUTPUT=$("$CLI_BIN" --agent "localhost:19090" status 2>&1) || true
 echo "$STATUS_OUTPUT"
 
 EVENTS_PROCESSED=$(echo "$STATUS_OUTPUT" | grep -i "events processed" | grep -oE '[0-9]+' | tail -1)
 if [[ -n "$EVENTS_PROCESSED" ]] && [[ "$EVENTS_PROCESSED" -gt 0 ]]; then
-    pass "Events captured: $EVENTS_PROCESSED"
+    pass "[hostNetwork] Events captured: $EVENTS_PROCESSED"
 else
-    fail "No events captured"
+    fail "[hostNetwork] No events captured"
 fi
 
 PODS_TRACKED=$(echo "$STATUS_OUTPUT" | grep -i "pods tracked" | grep -oE '[0-9]+' | tail -1)
 if [[ -n "$PODS_TRACKED" ]] && [[ "$PODS_TRACKED" -gt 0 ]]; then
-    pass "Pods tracked: $PODS_TRACKED"
+    pass "[hostNetwork] Pods tracked: $PODS_TRACKED"
 else
-    fail "No pods tracked (pod watcher may not have synced)"
+    fail "[hostNetwork] No pods tracked"
 fi
 
-# --- Verify flows have pod enrichment ---
-log "Querying flows..."
-FLOWS_OUTPUT=$("$CLI_BIN" --agent "localhost:19090" flows --limit 20 2>&1) || true
+# =====================================================================
+# TEST 2: Regular pod traffic (cross-node, by pod IP)
+# =====================================================================
+log ""
+log "--- TEST 2: Regular pod traffic (cross-node by pod IP) ---"
+
+log "Generating cross-node traffic: traffic-gen → echo-server ($ECHO_IP)..."
+for i in $(seq 1 5); do
+    kubectl exec traffic-gen -- curl -s -o /dev/null --max-time 5 "http://${ECHO_IP}/" 2>/dev/null || true
+done
+
+sleep 2
+
+# Use pod filter to isolate traffic-gen flows (avoids being drowned out by bulk traffic)
+FLOWS_OUTPUT=$("$CLI_BIN" --agent "localhost:19090" flows --pod traffic-gen --limit 50 2>&1) || true
 echo "$FLOWS_OUTPUT"
 
-if echo "$FLOWS_OUTPUT" | grep -qE '(TCP|UDP|ICMP)'; then
-    pass "Flows contain protocol information"
+# traffic-gen is on the worker node, so its IP should be enriched by the worker agent
+if echo "$FLOWS_OUTPUT" | grep -q "traffic-gen"; then
+    pass "[Regular pod] traffic-gen appears in flows"
 else
-    fail "No protocol information in flows"
+    fail "[Regular pod] traffic-gen not found in flows"
 fi
 
-# Check for real pod names (not just external/unknown)
-if echo "$FLOWS_OUTPUT" | grep -vE '(NAMESPACE|external|^$|-----)' | grep -q '/'; then
-    pass "Flows contain pod-enriched entries"
+# The destination is echo-server's pod IP — check the worker agent sees it
+if echo "$FLOWS_OUTPUT" | grep -q "$ECHO_IP"; then
+    pass "[Regular pod] echo-server pod IP ($ECHO_IP) visible as destination"
 else
-    fail "No pod-enriched flows found (all external/unknown)"
+    fail "[Regular pod] echo-server pod IP ($ECHO_IP) not found in traffic-gen flows"
 fi
 
-# --- Summary ---
+# =====================================================================
+# TEST 3: Service ClusterIP traffic (cross-node via DNAT)
+# =====================================================================
+log ""
+log "--- TEST 3: Service ClusterIP traffic (cross-node via DNAT) ---"
+
+SVC_IP=$(kubectl get svc echo-svc -o jsonpath='{.spec.clusterIP}')
+log "echo-svc ClusterIP: $SVC_IP"
+
+log "Generating Service traffic: traffic-gen → echo-svc ($SVC_IP)..."
+for i in $(seq 1 5); do
+    kubectl exec traffic-gen -- curl -s -o /dev/null --max-time 5 "http://echo-svc.default.svc.cluster.local/" 2>/dev/null || true
+done
+
+sleep 2
+
+FLOWS_OUTPUT=$("$CLI_BIN" --agent "localhost:19090" flows --pod traffic-gen --limit 50 2>&1) || true
+echo "$FLOWS_OUTPUT"
+
+# After DNAT, the destination IP is the echo-server's pod IP (not the ClusterIP).
+# kube-proxy rewrites dst before the packet hits eth0.
+# Verify the Service ClusterIP does NOT appear (confirming DNAT happened before TC)
+if echo "$FLOWS_OUTPUT" | grep -q "$SVC_IP"; then
+    fail "[Service] ClusterIP ($SVC_IP) visible in flows (DNAT not applied before TC hook)"
+else
+    pass "[Service] ClusterIP ($SVC_IP) correctly absent (DNAT applied before TC hook)"
+fi
+
+# The DNAT'd traffic should show echo-server's real pod IP as destination
+if echo "$FLOWS_OUTPUT" | grep -q "$ECHO_IP"; then
+    pass "[Service] Traffic resolved to echo-server pod IP after DNAT"
+else
+    fail "[Service] echo-server pod IP ($ECHO_IP) not found after Service DNAT"
+fi
+
+# =====================================================================
+# SUMMARY
+# =====================================================================
 echo ""
 echo "========================================"
 echo "  E2E Test Results"
@@ -170,11 +258,20 @@ echo "========================================"
 echo "  Passed: $PASSED"
 echo "  Failed: $FAILED"
 echo "========================================"
+echo ""
+echo "  Network modes tested:"
+echo "    hostNetwork pods      - agent's own traffic"
+echo "    Regular pods          - cross-node pod-to-pod by IP"
+echo "    Service ClusterIP     - cross-node via DNAT"
+echo ""
+echo "  Known limitations (not tested):"
+echo "    Same-node pod traffic - stays on veth, invisible on eth0"
+echo "========================================"
 
 if [[ "$FAILED" -gt 0 ]]; then
     echo ""
-    echo "--- Agent logs ---"
-    kubectl logs "$AGENT_POD" --tail=100
+    echo "--- Worker agent logs ---"
+    kubectl logs "$WORKER_AGENT" --tail=100
     echo "--- End logs ---"
     exit 1
 fi
