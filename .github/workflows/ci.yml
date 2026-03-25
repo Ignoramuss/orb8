@@ -124,12 +124,12 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/bpf-linker
-          key: ${{ runner.os }}-bpf-linker-llvm21
+          key: ${{ runner.os }}-bpf-linker-v2
 
       - name: Install bpf-linker
         run: |
           if ! command -v bpf-linker &> /dev/null; then
-            cargo install bpf-linker --git https://github.com/aya-rs/bpf-linker.git --features llvm-21
+            cargo install bpf-linker --git https://github.com/aya-rs/bpf-linker.git
           fi
 
       - name: Build eBPF probes

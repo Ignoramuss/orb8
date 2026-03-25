@@ -3,7 +3,7 @@
 //! This probe:
 //! - Attaches as tc classifier on network interfaces
 //! - Captures packet metadata (timestamp, length, 5-tuple)
-//! - Extracts cgroup ID for container/pod identification
+//! - Sets cgroup_id=0 (TC hooks lack process context; pod enrichment uses IP-based lookup)
 //! - Sends events to userspace via ring buffer
 //!
 //! Note: This binary must be built for the bpfel-unknown-none target.

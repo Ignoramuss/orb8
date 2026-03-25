@@ -1,7 +1,7 @@
 # Platform detection
 UNAME_S := $(shell uname -s)
 
-.PHONY: help dev shell test build install uninstall clean stop status install-tools fmt clippy check magic build-local test-local install-local magic-local build-ebpf verify-setup
+.PHONY: help dev shell test build install uninstall clean stop status install-tools fmt clippy check magic build-local test-local install-local magic-local build-ebpf verify-setup smoke-test e2e-test docker-build
 
 help:
 	@echo "orb8 Development Commands"
@@ -32,6 +32,11 @@ help:
 	@echo "  make test-local   - Test on current OS"
 	@echo "  make install-local - Install on current OS"
 	@echo "  make magic-local  - Build, test, install locally"
+	@echo ""
+	@echo "Testing:"
+	@echo "  make smoke-test   - Verify probes load and capture traffic (no k8s)"
+	@echo "  make e2e-test     - Full test: Docker build, kind deploy, verify enrichment"
+	@echo "  make docker-build - Build orb8-agent Docker image"
 	@echo ""
 	@echo "Management:"
 	@echo "  make clean        - Delete VM and cleanup"
@@ -203,4 +208,28 @@ else
 	@rustup component list --installed --toolchain nightly 2>/dev/null | grep -q rust-src && echo "✓ rust-src component (local): installed" || echo "⚠ rust-src not installed locally (run: rustup component add rust-src --toolchain nightly)"
 	@echo ""
 	@echo "Environment ready! Use 'make shell' to enter VM for full eBPF development."
+endif
+
+# Smoke test: verify probes load and capture traffic (no k8s required)
+smoke-test:
+ifeq ($(UNAME_S),Linux)
+	@bash scripts/smoke-test.sh
+else
+	@limactl shell orb8-dev bash -c "cd $(shell pwd) && bash scripts/smoke-test.sh"
+endif
+
+# E2E test: build Docker image, deploy to kind, verify pod enrichment
+e2e-test:
+ifeq ($(UNAME_S),Linux)
+	@bash scripts/e2e-test.sh
+else
+	@limactl shell orb8-dev bash -c "cd $(shell pwd) && bash scripts/e2e-test.sh"
+endif
+
+# Build Docker image for agent
+docker-build:
+ifeq ($(UNAME_S),Linux)
+	@docker build -t orb8-agent:test .
+else
+	@limactl shell orb8-dev bash -c "cd $(shell pwd) && docker build -t orb8-agent:test ."
 endif
