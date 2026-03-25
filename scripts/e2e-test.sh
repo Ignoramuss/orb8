@@ -18,12 +18,16 @@ CLI_BIN="$PROJECT_DIR/target/release/orb8"
 CLUSTER_NAME="orb8-test"
 IMAGE_NAME="orb8-agent:test"
 FORWARD_PID=""
+CP_FORWARD_PID=""
 PASSED=0
 FAILED=0
 
 cleanup() {
     if [[ -n "$FORWARD_PID" ]]; then
         kill "$FORWARD_PID" 2>/dev/null || true
+    fi
+    if [[ -n "$CP_FORWARD_PID" ]]; then
+        kill "$CP_FORWARD_PID" 2>/dev/null || true
     fi
     log "Cleaning up..."
     kubectl delete -f "$PROJECT_DIR/deploy/e2e-test-pods.yaml" --ignore-not-found 2>/dev/null || true
@@ -131,13 +135,27 @@ else
 fi
 
 # --- Port-forward to worker agent ---
-log "Setting up port-forward to worker agent..."
+log "Setting up port-forward to worker agent (port 19090)..."
 kubectl port-forward "$WORKER_AGENT" 19090:9090 &>/dev/null &
 FORWARD_PID=$!
 sleep 2
 
 for i in $(seq 1 10); do
     if "$CLI_BIN" --agent "localhost:19090" status >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+
+# --- Port-forward to control-plane agent ---
+CP_AGENT=$(kubectl get pods -l app=orb8-agent --field-selector spec.nodeName=orb8-test-control-plane -o jsonpath='{.items[0].metadata.name}')
+log "Setting up port-forward to control-plane agent (port 19091)..."
+kubectl port-forward "$CP_AGENT" 19091:9090 &>/dev/null &
+CP_FORWARD_PID=$!
+sleep 2
+
+for i in $(seq 1 10); do
+    if "$CLI_BIN" --agent "localhost:19091" status >/dev/null 2>&1; then
         break
     fi
     sleep 1
@@ -211,6 +229,17 @@ if echo "$FLOWS_OUTPUT" | grep -q "$ECHO_IP"; then
     pass "[Regular pod] echo-server pod IP ($ECHO_IP) visible as destination"
 else
     fail "[Regular pod] echo-server pod IP ($ECHO_IP) not found in traffic-gen flows"
+fi
+
+# Query the control-plane agent to verify echo-server appears as the attributed pod
+log "Querying control-plane agent for echo-server flows..."
+CP_FLOWS=$("$CLI_BIN" --agent "localhost:19091" flows --pod echo-server --limit 50 2>&1) || true
+echo "$CP_FLOWS"
+
+if echo "$CP_FLOWS" | grep -q "echo-server"; then
+    pass "[Regular pod] echo-server appears in control-plane agent flows"
+else
+    fail "[Regular pod] echo-server not found in control-plane agent flows"
 fi
 
 # =====================================================================
