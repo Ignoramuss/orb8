@@ -58,15 +58,29 @@ orb8 follows an incremental development approach, delivering user value at each 
 - [x] Consolidate `parse_ipv4` / `parse_ipv4_le` into one function in `net.rs`
 - [x] Move `format_*` functions from `aggregator.rs` to `net.rs`
 
+- [x] Ungate `aggregator` and `pod_cache` from `cfg(linux)` (pure data structures, enables macOS testing)
+- [x] Dockerfile with multi-stage (CI) and local (fast) build targets
+- [x] `deploy/daemonset.yaml` with RBAC (ServiceAccount, ClusterRole for pod list/watch)
+- [x] `deploy/kind-config.yaml` for 2-node test cluster
+- [x] `deploy/e2e-test-pods.yaml` (echo-server + Service + traffic-gen with nodeSelector)
+- [x] `scripts/smoke-test.sh` — probe loading + traffic capture (no k8s)
+- [x] `scripts/e2e-test.sh` — full kind cluster test across all network modes
+- [x] `make smoke-test`, `make e2e-test`, `make docker-build` targets
+
+**E2E test coverage** (9 assertions across 3 network modes):
+- hostNetwork pods — agent's own traffic, pods tracked > 0
+- Regular pods — cross-node pod-to-pod by IP, both agents show correct pod names
+- Service ClusterIP — DNAT resolved to pod IP before TC hook, ClusterIP absent from flows
+
+**Known limitation** (documented, not a test gap):
+- Same-node pod-to-pod traffic stays on veth pairs and is invisible to eth0-only probes
+
 **Acceptance criteria**:
 - `orb8 flows` and `orb8 trace network` show identical pod attributions
-- `cargo test` passes, `cargo clippy --workspace -- -D warnings` clean
+- `cargo test` passes (18 tests), `cargo clippy --workspace -- -D warnings` clean
 - No `src/` directory exists
-- `make e2e-test` passes in Lima VM
-
-**Files modified**: `orb8-agent/src/aggregator.rs`, `orb8-agent/src/main.rs`, `Cargo.toml`, `orb8-agent/src/lib.rs`
-**Files created**: `orb8-agent/src/net.rs`
-**Files deleted**: `src/**`, `tests/integration_test.rs`
+- `make smoke-test` passes (6/6)
+- `make e2e-test` passes (9/9)
 
 ---
 
@@ -76,20 +90,22 @@ orb8 follows an incremental development approach, delivering user value at each 
 
 **User value**: `kubectl apply -k deploy/` gives network visibility on every node. First "installable product" milestone.
 
-**Deliverables**:
-- [ ] `deploy/Dockerfile` -- multi-stage build (nightly+bpf-linker -> stable build -> distroless runtime)
-- [ ] `deploy/kubernetes/` -- namespace, DaemonSet, RBAC, headless Service, ConfigMap
-- [ ] `deploy/kustomization.yaml` -- base overlay
-- [ ] `make docker-build`, `make e2e-test`, `make smoke-test` targets (currently documented but missing)
+**Already delivered in Phase 3.5**:
+- [x] `Dockerfile` with multi-stage (CI) and local (fast) build targets
+- [x] `deploy/daemonset.yaml` with RBAC
+- [x] `make docker-build`, `make e2e-test`, `make smoke-test` targets
+
+**Remaining deliverables**:
+- [ ] `deploy/kustomization.yaml` -- base overlay for production deployment
+- [ ] `deploy/kubernetes/` -- namespace, headless Service, ConfigMap
 - [ ] `orb8-agent/src/config.rs` -- `AgentConfig::from_env()` with defaults matching current hardcoded values
 - [ ] GitHub Actions job to build + push container to ghcr.io on tagged releases
 - [ ] Quick-start README section
 
 **Acceptance criteria**:
-- `make docker-build` produces working image
 - `kubectl apply -k deploy/` deploys agents that start, attach probes, capture traffic
 - `orb8 --agent <node-ip>:9090 status` returns healthy from outside the cluster
-- E2E test runs in CI (or at minimum via `make e2e-test`)
+- CI runs `make e2e-test` on every PR
 
 ---
 
@@ -211,6 +227,27 @@ orb8 follows an incremental development approach, delivering user value at each 
 ---
 
 ## Known Limitations
+
+### Network visibility scope
+TC probes attach to the node's primary interface (eth0). This sees cross-node pod
+traffic and hostNetwork traffic, but **not same-node pod-to-pod traffic** which
+stays on veth pairs/bridges and never reaches eth0. Attaching to container bridge
+interfaces (cni0) or per-pod veth pairs would capture this traffic, but requires
+probe attachment in each pod's network namespace or on a shared bridge — which
+not all CNIs provide (kindnet uses direct routing with no bridge).
+
+### hostNetwork pod attribution
+Pods with `hostNetwork: true` share the node's IP address. All traffic from the
+node IP is attributed to whichever hostNetwork pod was last indexed in the pod
+cache. Host processes (kubelet, sshd) also share this IP and will be
+mis-attributed. A hybrid approach (socket-level eBPF probe mapping 5-tuples to
+cgroup IDs, shared with TC via an eBPF map) would solve this but adds complexity.
+
+### Service ClusterIP transparency
+kube-proxy applies DNAT before packets reach the TC hook on eth0, so flows show
+the actual backend pod IP, not the Service ClusterIP. This means orb8 correctly
+enriches the traffic but cannot tell you which Service was originally addressed.
+This is validated by the e2e test (ClusterIP is absent from flows).
 
 ### Polling model
 The main event loop polls the ring buffer at a fixed 100ms interval. Under high

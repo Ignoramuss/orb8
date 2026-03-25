@@ -1156,18 +1156,29 @@ This section documents what is actually implemented as of Phase 3.5 (v0.0.4).
   - Fixed double-enrichment bug (aggregator now accepts pre-resolved pod identity)
   - Removed dead root `src/` directory and converted to virtual workspace
   - Consolidated IP parsing/formatting into `net.rs`
-  - Cleaned up unused types (EnrichedEvent, dead events_dropped field)
+  - Ungated aggregator/pod_cache from `cfg(linux)` (enables macOS testing, 18 tests)
+  - Dockerfile (multi-stage + local build targets)
+  - `deploy/` directory: DaemonSet with RBAC, kind config, e2e test pods
+  - `scripts/smoke-test.sh` (probe loading, 6 assertions)
+  - `scripts/e2e-test.sh` (3 network modes, 9 assertions: hostNetwork, regular pod, Service DNAT)
+  - `make smoke-test`, `make e2e-test`, `make docker-build` targets
 
 ### What's Not Yet Implemented
 
-- `deploy/` directory (Dockerfile, K8s manifests) - Phase 4
 - `orb8-agent/src/config.rs` (env var configuration) - Phase 4
+- `deploy/kustomization.yaml` (production deployment overlay) - Phase 4
 - Prometheus `/metrics` endpoint - Phase 5
 - `orb8-util/` crate (shared userspace utilities) - Phase 6
 - Pipeline architecture (`pipeline/`, `export/`, `filter.rs`, `event.rs`) - Phase 6
 - `orb8-server` full implementation - Phase 7
 - `orb8-probes/src/syscall_probe.rs` - Phase 8
 - `orb8-probes/src/gpu_probe.rs` - Phase 9
+
+### Known Network Limitations
+
+- **Same-node pod traffic**: Invisible on eth0 (stays on veth pairs). Would require bridge/veth probe attachment.
+- **hostNetwork pods**: Share node IP. Last-indexed hostNetwork pod "wins" attribution for all node IP traffic.
+- **Service ClusterIP**: DNAT applied before TC hook, so flows show backend pod IP, not the Service address.
 
 ---
 

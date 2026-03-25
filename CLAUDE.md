@@ -17,13 +17,15 @@ orb8 is organized as a **Cargo workspace** with multiple crates:
 ```
 orb8/
 ├── Cargo.toml                    # Virtual workspace root (no root package)
+├── Dockerfile                    # Multi-stage (CI) and local (fast) build targets
 ├── orb8-probes/                  # eBPF probes (Rust, kernel space)
 ├── orb8-common/                  # Shared types between kernel/user space
 ├── orb8-agent/                   # Node agent (DaemonSet)
 ├── orb8-server/                  # Central API server (stub)
 ├── orb8-cli/                     # CLI tool
 ├── orb8-proto/                   # gRPC protocol definitions
-├── scripts/                      # Dev environment setup scripts
+├── deploy/                       # K8s manifests (DaemonSet, RBAC, kind config, test pods)
+├── scripts/                      # Dev setup, smoke-test.sh, e2e-test.sh
 └── docs/
     ├── ARCHITECTURE.md           # Detailed technical design
     └── ROADMAP.md                # Phase-based implementation plan
@@ -321,7 +323,13 @@ Uses the `local` Dockerfile target which copies the pre-built binary. For CI, us
 2. **Kernel Version**: Minimum 5.8, recommended 5.15+
 3. **BTF Required**: Kernel must have BTF for CO-RE (Compile Once, Run Everywhere)
 4. **Kubernetes Required**: Agent expects K8s API access
-5. **GPU Features**: Require NVIDIA DCGM or NVML (planned Phase 7)
+5. **GPU Features**: Require NVIDIA DCGM or NVML (planned Phase 9)
+
+## Known Network Limitations
+
+- **Same-node pod traffic**: TC probes attach to eth0. Pod-to-pod traffic on the same node stays on veth pairs and never reaches eth0, making it invisible. Would require attaching probes to bridge interfaces (cni0) or per-pod veths.
+- **hostNetwork pods**: Share the node's IP. Multiple hostNetwork pods and host processes (kubelet, sshd) are all attributed to whichever hostNetwork pod was last cached for that IP.
+- **Service ClusterIP**: kube-proxy applies DNAT before packets reach the TC hook, so flows show the backend pod IP, not the Service address. Enrichment works correctly, but the original Service target is lost.
 
 ## Roadmap Context
 
@@ -392,7 +400,7 @@ async fn main() -> Result<()> {
 
 ## GPU Telemetry Architecture
 
-**Planned Approach**: DCGM Integration (Phase 7)
+**Planned Approach**: DCGM Integration (Phase 9)
 
 **Why not eBPF?**
 - NVIDIA driver is closed-source
