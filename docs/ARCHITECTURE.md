@@ -1152,7 +1152,7 @@ This section documents what is actually implemented as of Phase 3.5 (v0.0.4).
   - Smart interface discovery (eth0, cni0, docker0, br-*)
   - Ring buffer drop counter (EVENTS_DROPPED eBPF map)
   - Self-traffic filter (agent gRPC port excluded)
-- **Phase 3.5** (Structural Cleanup): 🔄 In Progress (v0.0.4)
+- **Phase 3.5** (Structural Cleanup): ✅ Complete (v0.0.6)
   - Fixed double-enrichment bug (aggregator now accepts pre-resolved pod identity)
   - Removed dead root `src/` directory and converted to virtual workspace
   - Consolidated IP parsing/formatting into `net.rs`
@@ -1162,6 +1162,8 @@ This section documents what is actually implemented as of Phase 3.5 (v0.0.4).
   - `scripts/smoke-test.sh` (probe loading, 6 assertions)
   - `scripts/e2e-test.sh` (3 network modes, 9 assertions: hostNetwork, regular pod, Service DNAT)
   - `make smoke-test`, `make e2e-test`, `make docker-build` targets
+  - Restored `cargo install orb8` as wrapper crate
+  - Documentation overhaul (README, CHANGELOG, ROADMAP)
 
 ### What's Not Yet Implemented
 

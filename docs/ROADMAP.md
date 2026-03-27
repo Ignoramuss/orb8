@@ -1,6 +1,6 @@
 # orb8 Development Roadmap
 
-## Current Status: Phase 3.5 (Structural Cleanup)
+## Current Status: Phase 4 (Deploy and Run Anywhere)
 
 orb8 follows an incremental development approach, delivering user value at each phase. Phases are reordered from the original roadmap to prioritize **usability and value delivery**. Each phase is independently shippable.
 
@@ -40,7 +40,7 @@ orb8 follows an incremental development approach, delivering user value at each 
 
 ---
 
-## Phase 3.5: Structural Cleanup (v0.0.4) - CURRENT
+## Phase 3.5: Structural Cleanup (v0.0.6) - COMPLETE
 
 **Goal**: Fix what is broken, remove what is dead. Zero new features.
 
@@ -205,15 +205,23 @@ orb8 follows an incremental development approach, delivering user value at each 
 
 ---
 
-## Dropped Features
+## Phase 10: Developer Experience (v0.7.0+)
+
+**Goal**: Make orb8 the go-to tool for engineers debugging Kubernetes networking.
+
+**Deliverables**:
+- [ ] **TUI Dashboard** (ratatui) — real-time terminal UI showing top flows, pod traffic, agent health
+- [ ] **Standalone Mode** — on-demand tracing without deploying a DaemonSet (`orb8 trace --standalone`)
+- [ ] **DNS Tracing** — first-class `orb8 trace dns` command with query/response parsing (filter on port 53 of existing network probe)
+
+---
+
+## Deferred to Post-v1.0
 
 | Feature | Reason |
 |---------|--------|
-| TUI Dashboard (ratatui) | Low value-to-effort. CLI tables + Grafana covers all use cases. |
-| Standalone Mode (debug pod) | Overlaps with `kubectl debug`. Complex, fragile. |
 | Historical Storage (TimescaleDB) | Out of scope. Prometheus handles retention; Thanos/Mimir for long-term. |
-| DNS tracing as separate probe | Should be a filter on port 53 of existing network probe, not a separate feature. |
-| YAML config file system | Env vars sufficient until cluster mode. Deferred to post-v1.0. |
+| YAML config file system | Env vars sufficient until cluster mode. |
 | Multi-cluster support | Get single-cluster right first. |
 
 ## Deferred to Post-v1.0

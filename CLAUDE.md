@@ -8,7 +8,7 @@ orb8 is an eBPF-powered observability toolkit for Kubernetes with first-class GP
 
 **Architecture**: Dual-mode platform supporting both cluster-wide monitoring (DaemonSet) and standalone on-demand tracing.
 
-**Current Status**: Phase 3.5 (Structural Cleanup) - IP-based pod enrichment, eBPF TC classifiers, gRPC API.
+**Current Status**: Phase 4 (Deploy and Run Anywhere) - Network flows working, test infrastructure in place, documentation overhauled.
 
 ## Monorepo Structure
 
@@ -339,15 +339,16 @@ Development follows **phase-based approach** without strict timelines:
 - **Phase 1**: ✅ eBPF Infrastructure (COMPLETE)
 - **Phase 2**: ✅ Container Identification (COMPLETE)
 - **Phase 3**: ✅ Network Tracing MVP (COMPLETE)
-- **Phase 3.5**: 🔧 Structural Cleanup (IN PROGRESS)
-- **Phase 4**: DaemonSet deployment (Dockerfile, kind, e2e tests)
+- **Phase 3.5**: ✅ Structural Cleanup (COMPLETE)
+- **Phase 4**: 🔧 DaemonSet deployment (kustomize, CI image builds, env config)
 - **Phase 5**: Prometheus metrics
 - **Phase 6**: Event pipeline & JSON output
 - **Phase 7**: Cluster mode (orb8-server)
 - **Phase 8**: Syscall monitoring (validates cgroup enrichment)
 - **Phase 9**: GPU telemetry
+- **Phase 10**: TUI dashboard, standalone mode, DNS tracing
 
-**Current**: Phase 3.5
+**Current**: Phase 4
 
 See `docs/ROADMAP.md` for granular implementation details.
 
