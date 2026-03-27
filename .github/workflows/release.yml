@@ -64,6 +64,8 @@ jobs:
           cargo publish -p orb8-cli || true
           sleep 15
           cargo publish -p orb8-agent || true
+          sleep 15
+          cargo publish -p orb8 || true
 
   # Create GitHub Release
   release:
