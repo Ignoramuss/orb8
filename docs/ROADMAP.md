@@ -1,33 +1,36 @@
 # orb8 Development Roadmap
 
-## Current Status: Phase 4 (Deploy and Run Anywhere)
+## Current Status: Phase 4 (Production Hardening)
 
-orb8 follows an incremental development approach, delivering user value at each phase. Phases are reordered from the original roadmap to prioritize **usability and value delivery**. Each phase is independently shippable.
+orb8 follows an incremental development approach, delivering user value at each phase. Phases are ordered to prioritize **product value and production readiness** over infrastructure. Each phase is independently shippable.
 
 ## Design Principles
 
 **Data Collection**:
 - Ring buffers over perf buffers (lower CPU overhead at high throughput)
 - In-kernel filtering to minimize userspace load
-- BPF maps for flow deduplication before userspace
+- Lossy-by-design: accept event loss gracefully, track and expose drops as metrics
+- Bounded data structures throughout (no unbounded growth)
 
 **Container Identification**:
 - IP-based enrichment as primary path (TC classifiers cannot use `bpf_get_current_cgroup_id()`)
 - cgroup v2 ID mapping as fallback for tracepoint-attached probes
 - Async K8s API watch for metadata without blocking probes
 
-**Cluster Aggregation**:
-- Relay pattern: fan-out queries to per-node agents, merge results
-- gRPC streaming for real-time event delivery
-- Connection pooling with backpressure handling
+**Cluster Aggregation** (Hubble relay pattern):
+- Three-tier architecture: data plane (per-node agent) -> aggregation (relay) -> presentation (CLI/UI)
+- Persistent gRPC connections from relay to agents
+- Streaming-first for real-time event delivery
+- Partial failure handling: return results from healthy agents, warn about unreachable ones
 
 ---
 
-## Phase 3: Network MVP (v0.0.3) - COMPLETE
+## Completed Phases
+
+### Phase 3: Network MVP (v0.0.3)
 
 **Goal**: Single-node K8s network visibility via CLI
 
-**Completed**:
 - [x] eBPF TC probes (ingress/egress)
 - [x] IPv4 5-tuple extraction
 - [x] IP-based pod enrichment
@@ -38,181 +41,214 @@ orb8 follows an incremental development approach, delivering user value at each 
 - [x] Compile-time little-endian assertion
 - [x] Self-traffic filter (agent gRPC port excluded from captures)
 
----
-
-## Phase 3.5: Structural Cleanup (v0.0.6) - COMPLETE
+### Phase 3.5: Structural Cleanup (v0.0.6)
 
 **Goal**: Fix what is broken, remove what is dead. Zero new features.
 
-**User value**: `orb8 flows` returns correct pod names instead of `"unknown/cgroup-0"`.
+- [x] Fix double enrichment bug (aggregator accepts pre-resolved pod identity)
+- [x] Delete 18 dead stub files in `src/`
+- [x] Convert root `Cargo.toml` to virtual workspace
+- [x] Add unit tests for the aggregator
+- [x] Consolidate `parse_ipv4` / `parse_ipv4_le` into one function
+- [x] Ungate `aggregator` and `pod_cache` from `cfg(linux)`
+- [x] Dockerfile with multi-stage (CI) and local (fast) build targets
+- [x] DaemonSet with RBAC, kind-config, e2e-test-pods
+- [x] `make smoke-test`, `make e2e-test`, `make docker-build` targets
+- [x] E2E test coverage: 9 assertions across 3 network modes
 
-**Problem**: The aggregator enriches events via `pod_cache.get(event.cgroup_id)`, but TC classifiers always produce `cgroup_id=0`. Every aggregated flow is attributed to `"unknown/cgroup-0"`. Meanwhile `main.rs` does correct IP-based enrichment for gRPC streams. So `orb8 flows` returns garbage while `orb8 trace network` works fine.
+---
+
+## Phase 4: Production Hardening (v0.1.0) -- IN PROGRESS
+
+**Goal**: Make the agent safe to run in production Kubernetes clusters.
+
+**User value**: Operators can deploy orb8 with confidence that it won't OOM, won't silently fail, and will be restarted by Kubernetes on errors.
 
 **Deliverables**:
-- [x] Fix double enrichment bug: change `aggregator.process_event()` to accept pre-resolved `(namespace, pod_name)` from the caller
-- [x] Delete entire `src/` directory (18 dead stub files)
-- [x] Convert root `Cargo.toml` to virtual workspace (remove `[package]`, dead deps, `[[bin]]`)
-- [x] Delete unused `EnrichedEvent` from `pod_cache.rs` and dead `events_dropped` field from aggregator
-- [x] Delete `tests/integration_test.rs` (tests dead code)
-- [x] Add unit tests for the aggregator
-- [x] Consolidate `parse_ipv4` / `parse_ipv4_le` into one function in `net.rs`
-- [x] Move `format_*` functions from `aggregator.rs` to `net.rs`
-
-- [x] Ungate `aggregator` and `pod_cache` from `cfg(linux)` (pure data structures, enables macOS testing)
-- [x] Dockerfile with multi-stage (CI) and local (fast) build targets
-- [x] `deploy/daemonset.yaml` with RBAC (ServiceAccount, ClusterRole for pod list/watch)
-- [x] `deploy/kind-config.yaml` for 2-node test cluster
-- [x] `deploy/e2e-test-pods.yaml` (echo-server + Service + traffic-gen with nodeSelector)
-- [x] `scripts/smoke-test.sh` — probe loading + traffic capture (no k8s)
-- [x] `scripts/e2e-test.sh` — full kind cluster test across all network modes
-- [x] `make smoke-test`, `make e2e-test`, `make docker-build` targets
-
-**E2E test coverage** (9 assertions across 3 network modes):
-- hostNetwork pods — agent's own traffic, pods tracked > 0
-- Regular pods — cross-node pod-to-pod by IP, both agents show correct pod names
-- Service ClusterIP — DNAT resolved to pod IP before TC hook, ClusterIP absent from flows
-
-**Known limitation** (documented, not a test gap):
-- Same-node pod-to-pod traffic stays on veth pairs and is invisible to eth0-only probes
-
-**Acceptance criteria**:
-- `orb8 flows` and `orb8 trace network` show identical pod attributions
-- `cargo test` passes (18 tests), `cargo clippy --workspace -- -D warnings` clean
-- No `src/` directory exists
-- `make smoke-test` passes (6/6)
-- `make e2e-test` passes (9/9)
-
----
-
-## Phase 4: Deploy and Run Anywhere (v0.1.0)
-
-**Goal**: One-command deployment to any Kubernetes cluster.
-
-**User value**: `kubectl apply -k deploy/` gives network visibility on every node. First "installable product" milestone.
-
-**Already delivered in Phase 3.5**:
-- [x] `Dockerfile` with multi-stage (CI) and local (fast) build targets
-- [x] `deploy/daemonset.yaml` with RBAC
-- [x] `make docker-build`, `make e2e-test`, `make smoke-test` targets
-
-**Remaining deliverables**:
+- [x] `orb8-agent/src/config.rs` -- `AgentConfig::from_env()` replacing all hardcoded values
+- [x] `orb8-agent/src/health.rs` -- `HealthState` with atomic flags and degradation counters
+- [x] `orb8-agent/src/health_server.rs` -- HTTP `/healthz` and `/readyz` endpoints for K8s probes
+- [x] Bounded flow table with batch eviction (default 100K flows, configurable)
+- [x] Bounded pod cache with capacity check (default 10K entries, configurable)
+- [x] Graceful shutdown via `CancellationToken` propagated to all spawned tasks
+- [x] All spawned tasks tracked via `JoinHandle` with shutdown timeout
+- [x] Real health status (computed from component state, not hardcoded `true`)
+- [x] Broadcast drop tracking (no more silent `let _ = send()`)
+- [x] DaemonSet: resource limits, liveness/readiness probes, terminationGracePeriodSeconds, seccompProfile
 - [ ] `deploy/kustomization.yaml` -- base overlay for production deployment
-- [ ] `deploy/kubernetes/` -- namespace, headless Service, ConfigMap
-- [ ] `orb8-agent/src/config.rs` -- `AgentConfig::from_env()` with defaults matching current hardcoded values
-- [ ] GitHub Actions job to build + push container to ghcr.io on tagged releases
 - [ ] Quick-start README section
 
+**Configuration knobs** (all via environment variables with sane defaults):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ORB8_GRPC_PORT` | 9090 | gRPC server port |
+| `ORB8_HEALTH_PORT` | 9091 | Health HTTP endpoint port |
+| `ORB8_MAX_FLOWS` | 100000 | Maximum flow table entries |
+| `ORB8_FLOW_TIMEOUT_SECS` | 30 | Flow expiration timeout |
+| `ORB8_MAX_POD_CACHE` | 10000 | Maximum pod cache entries |
+| `ORB8_BROADCAST_CHANNEL_SIZE` | 1000 | gRPC event broadcast buffer |
+| `ORB8_POLL_INTERVAL_MS` | 100 | Ring buffer poll interval |
+| `ORB8_MAX_BATCH_SIZE` | 1024 | Max events per poll cycle |
+| `ORB8_SHUTDOWN_TIMEOUT_SECS` | 10 | Graceful shutdown deadline |
+| `ORB8_EXPIRATION_INTERVAL_SECS` | 10 | Flow expiration sweep interval |
+| `ORB8_MAX_QUERY_LIMIT` | 10000 | Max flows returned per query |
+
 **Acceptance criteria**:
-- `kubectl apply -k deploy/` deploys agents that start, attach probes, capture traffic
-- `orb8 --agent <node-ip>:9090 status` returns healthy from outside the cluster
-- CI runs `make e2e-test` on every PR
+- Agent memory stays bounded under sustained high event rates
+- `kubectl rollout restart ds/orb8-agent` causes zero panics
+- `curl <agent-ip>:9091/healthz` returns 200 when healthy, 503 when degraded
+- All existing tests pass (34 unit tests + smoke + e2e)
 
 ---
 
-## Phase 5: Prometheus Metrics (v0.2.0)
+## Phase 5: Hybrid Mode -- Standalone CLI (v0.2.0)
 
-**Goal**: Prometheus-scrapable metrics from every agent.
+**Goal**: Let users run `orb8 trace network --standalone` on any Linux box for immediate network visibility, with no Kubernetes deployment required.
+
+**User value**: Zero-install evaluation path. Someone can `cargo install orb8 --features standalone` and immediately see network flows.
+
+**Architecture**:
+- Extract agent core logic into `orb8-core` crate (probe loading, enrichment, aggregation)
+- `orb8-agent` becomes a thin wrapper: `orb8-core` + gRPC server + K8s watcher
+- CLI gains `--standalone` flag that wires `orb8-core` directly to output formatters
+- Feature flag: `--features standalone` includes eBPF probes in CLI binary (~15MB)
+- Without feature flag: CLI is remote-only (~5MB, cross-platform)
+
+**Mode detection**:
+```
+orb8 trace network --standalone           # Load probes directly (Linux + root)
+orb8 trace network --agent localhost:9090  # Connect to running agent via gRPC
+orb8 trace network                        # Auto-detect: try agent, fall back to standalone
+```
+
+**Deliverables**:
+- [ ] `orb8-core/` crate with `StandaloneEngine` (probe loading, event processing, enrichment)
+- [ ] `EventSource` trait in CLI abstracting gRPC vs standalone event streams
+- [ ] `--standalone` flag in CLI with feature-gated `orb8-core` dependency
+- [ ] `node_name` field added to `NetworkEvent` and `NetworkFlow` proto messages
+- [ ] Identical output format in both modes
+
+**Acceptance criteria**:
+- `sudo orb8 trace network --standalone` on Linux shows live flows
+- `orb8 trace network --agent localhost:9090` works exactly as before
+- Output is identical between standalone and remote modes
+- `cargo install orb8` (no feature flag) works on macOS for remote-only usage
+
+---
+
+## Phase 6: Cluster Mode -- Relay (v0.3.0)
+
+**Goal**: Single endpoint to query all nodes. `orb8 flows` returns cluster-wide data.
+
+**User value**: No more port-forwarding to individual agents. One command, full cluster visibility.
+
+**Architecture** (Hubble relay pattern):
+- `orb8-server` implements relay: discovers agents via K8s API, maintains persistent gRPC connections
+- Fans out queries to all agents in parallel, merges results
+- Exposes same `ObserverService` gRPC API externally
+- Partial failure: returns results from healthy agents, warns about unreachable ones
+- Streaming: `StreamEvents` merges per-node streams ordered by timestamp
+
+**Proto changes**:
+- `ObserverService` (external API for clients)
+- `PeerService` (internal relay-to-agent topology discovery)
+- `Peer` message with `PeerState` (connected/unreachable)
+- `StatusResponse` with per-node breakdown
+
+**CLI changes**:
+```
+orb8 flows                                    # Auto-discover relay
+orb8 flows --relay orb8-relay:8080           # Explicit relay address
+orb8 flows --agent worker-1:9090             # Direct single agent
+orb8 flows --standalone                       # Local only
+```
+
+**Deliverables**:
+- [ ] `orb8-server` implementation (relay, peer discovery, fan-out/fan-in)
+- [ ] Proto split: `ObserverService` + `PeerService`
+- [ ] Relay Deployment + Service manifests
+- [ ] CLI relay auto-discovery and `--relay` flag
+- [ ] Partial failure handling with degraded results
+
+**Acceptance criteria**:
+- `orb8 flows` via relay returns flows from all nodes in a multi-node kind cluster
+- `orb8 trace network` via relay streams events from all nodes
+- `orb8 status` via relay shows per-node health
+- If one agent is down, queries return results from remaining agents
+
+---
+
+## Phase 7: Rich Filtering and JSON Output (v0.4.0)
+
+**Goal**: Composable filters for flows and events. JSON output for scripting.
+
+**User value**: `orb8 flows --namespace ml-training --protocol TCP --dst-port 443 --output json | jq .`
+
+**Deliverables**:
+- [ ] `FlowFilter` proto message with namespace, pod, label, protocol, port, IP, direction fields
+- [ ] Server-side filter evaluation (applied at agent before gRPC transfer)
+- [ ] Pod label enrichment in pod cache (extend `PodMetadata`)
+- [ ] CLI `--output json|table` flag
+- [ ] CLI filter flags: `--namespace`, `--pod`, `--label`, `--protocol`, `--src-port`, `--dst-port`, `--src-ip`, `--dst-ip`
+
+**Acceptance criteria**:
+- All filter fields work individually and in combination (AND semantics)
+- `--output json` produces valid NDJSON (one object per line for streaming)
+- Filters applied server-side (verifiable by reduced gRPC bandwidth)
+
+---
+
+## Phase 8: Deploy and Operate (v0.5.0)
+
+**Goal**: Production deployment infrastructure -- Helm chart, CI/CD, multi-arch images.
+
+**User value**: `helm install orb8 ./charts/orb8` deploys a working cluster in minutes.
+
+**Deliverables**:
+- [ ] Helm chart with configurable values (image, resources, tolerations, relay replicas)
+- [ ] GitHub Actions: build + push to `ghcr.io` on tagged releases (amd64 + arm64)
+- [ ] GitHub Releases with pre-built CLI binaries (Linux standalone, macOS remote-only)
+- [ ] `orb8-system` namespace isolation
+- [ ] `deploy/kustomization.yaml` base overlay
+
+**Acceptance criteria**:
+- `helm install orb8 ./charts/orb8` deploys agents + relay that start and capture traffic
+- CI builds images on every tag push
+- CLI binaries downloadable from GitHub Releases
+
+---
+
+## Phase 9: Full Prometheus Integration and Grafana (v0.6.0)
+
+**Goal**: Comprehensive Prometheus metrics and pre-built Grafana dashboards.
 
 **User value**: Grafana dashboards showing pod traffic, top talkers, agent health -- works without the CLI.
 
 **Deliverables**:
-- [ ] HTTP `/metrics` endpoint on port 9091 (using `prometheus` crate + `hyper`)
-- [ ] Metrics: `orb8_network_bytes_total{namespace,pod,direction,protocol}`, `orb8_network_packets_total`, `orb8_active_flows`, `orb8_events_processed_total`, `orb8_events_dropped_total`, `orb8_pods_tracked`, `orb8_agent_uptime_seconds`
+- [ ] HTTP `/metrics` endpoint on port 9091 (sharing health server, or separate port)
+- [ ] Flow metrics: `orb8_network_bytes_total{namespace,pod,direction,protocol}`, `orb8_network_packets_total`, `orb8_active_flows`
+- [ ] Agent metrics: `orb8_events_processed_total`, `orb8_events_dropped_total`, `orb8_pods_tracked`, `orb8_agent_uptime_seconds`
 - [ ] `deploy/servicemonitor.yaml` for Prometheus Operator
 - [ ] `deploy/grafana-dashboard.json` -- pre-built dashboard
-- [ ] DaemonSet annotations for Prometheus scraping
+- [ ] Cardinality management (limit label combinations)
 
 **Acceptance criteria**:
 - `curl <agent-ip>:9091/metrics` returns valid Prometheus exposition format
-- Metrics are consistent with gRPC `GetStatus` values
 - Grafana dashboard imports and shows live data
+- Cardinality stays bounded under high pod churn
 
 ---
 
-## Phase 6: Event Pipeline Architecture (v0.3.0)
+## Phase 10+: Future (v0.7.0+)
 
-**Goal**: Decompose monolithic main.rs into composable pipeline. Add JSON output.
+Deferred in priority order:
 
-**User value**: `orb8 trace network --output json` for scripting/piping. Foundation for all future sinks.
-
-**Deliverables**:
-- [ ] `orb8-util/` crate with shared formatting/parsing utilities
-- [ ] `pipeline/` module with `EventSource`, `EventEnricher`, `EventProcessor`, `EventExporter` traits
-- [ ] `export/grpc.rs` and `export/log.rs` sink implementations
-- [ ] `filter.rs` with `EventFilter` trait and `SelfTrafficFilter`
-- [ ] `event.rs` with canonical `EnrichedEvent` type
-- [ ] `shutdown.rs` with `CancellationToken` + `JoinSet` coordinator
-- [ ] Refactored `main.rs` under 100 lines
-- [ ] CLI `--output json|table` flag
-- [ ] Proto split: `common.proto`, `agent.proto`, `server.proto` (under `orb8/v1/`)
-
-**Acceptance criteria**:
-- All existing functionality unchanged (gRPC, CLI, E2E tests)
-- `main.rs` under 100 lines
-- Adding a new export sink = implementing one trait, no main.rs changes
-- `orb8 trace network --output json | jq .pod_name` works
-
----
-
-## Phase 7: Cluster Mode (v0.4.0)
-
-**Goal**: Single endpoint to query all nodes.
-
-**User value**: `orb8 flows --namespace ml-training` returns cluster-wide data from one command.
-
-**Deliverables**:
-- [ ] `orb8-server` implementation: agent discovery via K8s API, fan-out/fan-in gRPC
-- [ ] Server Deployment + Service manifests
-- [ ] CLI `--mode cluster` flag / auto-detection
-- [ ] Partial failure handling (return results from healthy agents, warn about unreachable ones)
-
-> **Design note**: The server's fan-out/aggregation protocol needs detailed
-> design before implementation. The current per-agent API (QueryFlows,
-> StreamEvents, GetStatus) must compose cleanly into multi-node responses.
-> Consider: partial failure handling, result ordering, streaming back-pressure,
-> and how AgentStatus rolls up into ClusterStatus.
-
----
-
-## Phase 8: Syscall Monitoring (v0.5.0)
-
-**Goal**: Per-pod syscall visibility.
-
-**User value**: `orb8 trace syscall --pod my-app` -- security visibility into what syscalls pods are making.
-
-**Rationale for ordering before GPU**: Uses existing eBPF infra (tracepoints), broader audience than GPU users, adds security value. `cgroup_id` IS available in tracepoint context (unlike TC), validating the cgroup enrichment path.
-
-**Deliverables**:
-- [ ] `orb8-probes/src/syscall_probe.rs` (tracepoint/raw_syscalls/sys_enter)
-- [ ] `SyscallEvent` in `orb8-common`, new ring buffer
-- [ ] Sampling for hot syscalls, always-capture for dangerous ones (ptrace, mount)
-- [ ] CLI `orb8 trace syscall` + proto extensions
-- [ ] Prometheus syscall metrics
-
----
-
-## Phase 9: GPU Telemetry (v0.6.0)
-
-**Goal**: Per-pod GPU utilization for ML workloads.
-
-**User value**: `orb8 trace gpu --namespace ml-training` shows GPU utilization per pod.
-
-**Deliverables**:
-- [ ] NVML polling for utilization, memory, temperature
-- [ ] Pod-to-GPU mapping via kubelet pod-resources API
-- [ ] CLI `orb8 trace gpu` + Prometheus GPU metrics
-- [ ] Grafana GPU dashboard panel
-
----
-
-## Phase 10: Developer Experience (v0.7.0+)
-
-**Goal**: Make orb8 the go-to tool for engineers debugging Kubernetes networking.
-
-**Deliverables**:
-- [ ] **TUI Dashboard** (ratatui) — real-time terminal UI showing top flows, pod traffic, agent health
-- [ ] **Standalone Mode** — on-demand tracing without deploying a DaemonSet (`orb8 trace --standalone`)
-- [ ] **DNS Tracing** — first-class `orb8 trace dns` command with query/response parsing (filter on port 53 of existing network probe)
+1. **Syscall Monitoring** -- tracepoint probes with cgroup-based enrichment. `orb8 trace syscall --pod my-app`. Validates cgroup enrichment path.
+2. **GPU Telemetry** -- NVML polling + kubelet pod-resources API. `orb8 trace gpu --namespace ml-training`.
+3. **TUI Dashboard** -- ratatui-based real-time terminal UI (top flows, pod traffic, agent health).
+4. **DNS Tracing** -- Parse DNS in network probe (port 53 filter). `orb8 trace dns`.
+5. **Historical Storage** -- TimescaleDB or Thanos for long-term flow retention.
 
 ---
 
@@ -220,54 +256,32 @@ orb8 follows an incremental development approach, delivering user value at each 
 
 | Feature | Reason |
 |---------|--------|
-| Historical Storage (TimescaleDB) | Out of scope. Prometheus handles retention; Thanos/Mimir for long-term. |
-| YAML config file system | Env vars sufficient until cluster mode. |
-| Multi-cluster support | Get single-cluster right first. |
-
-## Deferred to Post-v1.0
-
-- IPv6 support (NetworkFlowEvent struct migration)
-- TCP connection state tracking (SYN/FIN/RST)
-- eBPF GPU probes (closed-source driver, research only)
-- OpenTelemetry export sink
-- CRD-based policy/filter configuration
+| IPv6 support | NetworkFlowEvent struct migration needed |
+| TCP connection state tracking | SYN/FIN/RST tracking adds complexity |
+| eBPF GPU probes | Closed-source NVIDIA driver, research only |
+| OpenTelemetry export sink | Prometheus sufficient for initial users |
+| CRD-based policy/filter config | Env vars + CLI flags sufficient initially |
+| Multi-cluster support | Get single-cluster right first |
+| YAML config file system | Env vars sufficient until complexity warrants it |
 
 ---
 
 ## Known Limitations
 
 ### Network visibility scope
-TC probes attach to the node's primary interface (eth0). This sees cross-node pod
-traffic and hostNetwork traffic, but **not same-node pod-to-pod traffic** which
-stays on veth pairs/bridges and never reaches eth0. Attaching to container bridge
-interfaces (cni0) or per-pod veth pairs would capture this traffic, but requires
-probe attachment in each pod's network namespace or on a shared bridge — which
-not all CNIs provide (kindnet uses direct routing with no bridge).
+TC probes attach to the node's primary interface (eth0). Pod-to-pod traffic on the same node stays on veth pairs and never reaches eth0, making it invisible. Attaching to container bridge interfaces (cni0) or per-pod veths would capture this traffic but requires probe attachment in each pod's network namespace or on a shared bridge.
 
 ### hostNetwork pod attribution
-Pods with `hostNetwork: true` share the node's IP address. All traffic from the
-node IP is attributed to whichever hostNetwork pod was last indexed in the pod
-cache. Host processes (kubelet, sshd) also share this IP and will be
-mis-attributed. A hybrid approach (socket-level eBPF probe mapping 5-tuples to
-cgroup IDs, shared with TC via an eBPF map) would solve this but adds complexity.
+Pods with `hostNetwork: true` share the node's IP address. All traffic from the node IP is attributed to whichever hostNetwork pod was last indexed in the pod cache. A hybrid approach (socket-level eBPF probe mapping 5-tuples to cgroup IDs, shared with TC via an eBPF map) would solve this but adds complexity.
 
 ### Service ClusterIP transparency
-kube-proxy applies DNAT before packets reach the TC hook on eth0, so flows show
-the actual backend pod IP, not the Service ClusterIP. This means orb8 correctly
-enriches the traffic but cannot tell you which Service was originally addressed.
-This is validated by the e2e test (ClusterIP is absent from flows).
+kube-proxy applies DNAT before packets reach the TC hook on eth0, so flows show the actual backend pod IP, not the Service ClusterIP. orb8 correctly enriches the traffic but cannot tell you which Service was originally addressed.
 
 ### Polling model
-The main event loop polls the ring buffer at a fixed 100ms interval. Under high
-throughput, this adds latency and can cause ring buffer drops. Under zero
-traffic, it's wasted CPU. A future improvement will use epoll/async
-notification from the ring buffer.
+The main event loop polls the ring buffer at a configurable interval (default 100ms). Under high throughput, this adds latency and can cause ring buffer drops. Under zero traffic, it is wasted CPU. A future improvement will use epoll/async notification from the ring buffer.
 
 ### FlowKey heap allocation
-`FlowKey` includes `namespace` and `pod_name` (heap-allocated Strings). At high
-packet rates, hashing these strings in the DashMap is measurably more expensive
-than a pure integer 5-tuple key. A two-level lookup (integer key -> enriched
-metadata) is planned for performance-critical deployments.
+`FlowKey` includes `namespace` and `pod_name` (heap-allocated Strings). At high packet rates, hashing these strings in the DashMap is measurably more expensive than a pure integer 5-tuple key. A two-level lookup (integer key -> enriched metadata) is planned for performance-critical deployments.
 
 ---
 
@@ -277,14 +291,13 @@ metadata) is planned for performance-critical deployments.
 
 | Phase | Test Command | What It Validates |
 |-------|-------------|-------------------|
-| 3.5 | `cargo test && cargo clippy --workspace -- -D warnings` | Bug fix, dead code removal, no regressions |
-| 3.5 | `make e2e-test` (Lima VM) | `orb8 flows` returns correct pod names |
-| 4 | `make docker-build && make e2e-test` | Container builds, DaemonSet deploys, captures traffic |
-| 5 | `curl localhost:9091/metrics` + Grafana import | Metrics valid, dashboard works |
-| 6 | `orb8 trace network --output json \| jq .` | JSON output valid |
-| 6 | `cargo test -p orb8-agent` | Pipeline unit tests pass |
-| 7 | `orb8 --mode cluster flows` on multi-node kind | Cross-node query works |
-| 8 | `orb8 trace syscall --pod <test-pod>` | Syscalls captured with correct attribution |
+| 4 | `cargo test && cargo clippy --workspace -- -D warnings` | Hardening, config, health, no regressions |
+| 4 | `make e2e-test` (Lima VM) | DaemonSet deploys with probes, health checks work |
+| 5 | `sudo orb8 trace network --standalone` | Standalone mode captures flows |
+| 6 | `orb8 flows` (via relay on multi-node kind) | Cross-node query aggregation works |
+| 7 | `orb8 flows --namespace X --output json \| jq .` | Filtering and JSON output valid |
+| 8 | `helm install orb8 ./charts/orb8` | Helm deployment works end-to-end |
+| 9 | `curl localhost:9091/metrics` + Grafana import | Metrics valid, dashboard works |
 
 ### Continuous Validation
 

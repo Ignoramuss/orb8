@@ -1,4 +1,5 @@
 use crate::aggregator::FlowAggregator;
+use crate::health::HealthState;
 use crate::net::{format_direction, format_ipv4, format_protocol};
 use crate::pod_cache::PodCache;
 use anyhow::Result;
@@ -12,7 +13,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast;
+use tokio::task::JoinHandle;
 use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
+use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
 
 pub struct AgentService {
@@ -22,6 +25,8 @@ pub struct AgentService {
     start_time: Instant,
     event_tx: broadcast::Sender<NetworkEvent>,
     events_dropped: Arc<AtomicU64>,
+    health: HealthState,
+    max_query_limit: usize,
 }
 
 impl AgentService {
@@ -30,8 +35,11 @@ impl AgentService {
         pod_cache: PodCache,
         node_name: String,
         events_dropped: Arc<AtomicU64>,
+        health: HealthState,
+        broadcast_channel_size: usize,
+        max_query_limit: usize,
     ) -> Self {
-        let (event_tx, _) = broadcast::channel(1000);
+        let (event_tx, _) = broadcast::channel(broadcast_channel_size);
 
         Self {
             aggregator,
@@ -40,6 +48,8 @@ impl AgentService {
             start_time: Instant::now(),
             event_tx,
             events_dropped,
+            health,
+            max_query_limit,
         }
     }
 
@@ -55,8 +65,8 @@ impl OrbitAgentService for AgentService {
         request: Request<QueryFlowsRequest>,
     ) -> Result<Response<QueryFlowsResponse>, Status> {
         let req = request.into_inner();
-        let limit = if req.limit == 0 {
-            1000
+        let limit = if req.limit == 0 || req.limit as usize > self.max_query_limit {
+            self.max_query_limit
         } else {
             req.limit as usize
         };
@@ -122,8 +132,8 @@ impl OrbitAgentService for AgentService {
         Ok(Response::new(AgentStatus {
             node_name: self.node_name.clone(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            healthy: true,
-            health_message: "OK".to_string(),
+            healthy: self.health.is_healthy(),
+            health_message: self.health.health_message(),
             events_processed: self.aggregator.events_processed(),
             events_dropped: self.events_dropped.load(Ordering::Relaxed),
             pods_tracked: self.pod_cache.ip_entries_count() as u32,
@@ -138,25 +148,38 @@ pub async fn start_server(
     pod_cache: PodCache,
     addr: std::net::SocketAddr,
     events_dropped: Arc<AtomicU64>,
-) -> Result<broadcast::Sender<NetworkEvent>> {
+    cancel: CancellationToken,
+    health: HealthState,
+    broadcast_channel_size: usize,
+    max_query_limit: usize,
+) -> Result<(broadcast::Sender<NetworkEvent>, JoinHandle<()>)> {
     let node_name = std::env::var("NODE_NAME")
         .or_else(|_| hostname::get().map(|h| h.to_string_lossy().to_string()))
         .unwrap_or_else(|_| "unknown".to_string());
 
-    let service = AgentService::new(aggregator, pod_cache, node_name, events_dropped);
+    let service = AgentService::new(
+        aggregator,
+        pod_cache,
+        node_name,
+        events_dropped,
+        health,
+        broadcast_channel_size,
+        max_query_limit,
+    );
     let event_tx = service.event_sender();
 
     info!("Starting gRPC server on {}", addr);
 
-    let server = tonic::transport::Server::builder()
-        .add_service(OrbitAgentServiceServer::new(service))
-        .serve(addr);
+    let grpc_service = OrbitAgentServiceServer::new(service);
 
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
+        let server = tonic::transport::Server::builder()
+            .add_service(grpc_service)
+            .serve_with_shutdown(addr, cancel.cancelled());
         if let Err(e) = server.await {
             log::error!("gRPC server error: {}", e);
         }
     });
 
-    Ok(event_tx)
+    Ok((event_tx, handle))
 }

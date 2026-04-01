@@ -1,12 +1,7 @@
-//! Pod metadata cache for correlating cgroup IDs to Kubernetes pods
-//!
-//! This module maintains a concurrent map from cgroup IDs to pod metadata,
-//! allowing the agent to enrich eBPF events with Kubernetes context.
-
+use crate::health::HealthState;
 use dashmap::DashMap;
 use std::sync::Arc;
 
-/// Metadata about a Kubernetes pod container
 #[derive(Debug, Clone)]
 pub struct PodMetadata {
     pub namespace: String,
@@ -17,74 +12,91 @@ pub struct PodMetadata {
     pub pod_ip: Option<u32>,
 }
 
-/// Thread-safe cache mapping cgroup IDs and IPs to pod metadata
 #[derive(Clone)]
 pub struct PodCache {
     by_cgroup: Arc<DashMap<u64, PodMetadata>>,
     by_ip: Arc<DashMap<u32, PodMetadata>>,
+    max_entries: usize,
+    health: HealthState,
 }
 
 impl PodCache {
-    /// Create a new empty pod cache
-    pub fn new() -> Self {
+    pub fn new(max_entries: usize, health: HealthState) -> Self {
         Self {
             by_cgroup: Arc::new(DashMap::new()),
             by_ip: Arc::new(DashMap::new()),
+            max_entries,
+            health,
         }
     }
 
-    /// Insert or update a mapping from cgroup ID to pod metadata
     pub fn insert(&self, cgroup_id: u64, metadata: PodMetadata) {
         if let Some(ip) = metadata.pod_ip {
-            self.by_ip.insert(ip, metadata.clone());
+            self.insert_ip(ip, metadata.clone());
         }
         self.by_cgroup.insert(cgroup_id, metadata);
     }
 
-    /// Insert pod metadata with IP-based lookup (preferred for IP-based enrichment)
     pub fn insert_by_ip(&self, metadata: PodMetadata) {
         if let Some(ip) = metadata.pod_ip {
-            self.by_ip.insert(ip, metadata);
+            self.insert_ip(ip, metadata);
         }
     }
 
-    /// Look up pod metadata by cgroup ID
+    fn insert_ip(&self, ip: u32, metadata: PodMetadata) {
+        if self.by_ip.contains_key(&ip) {
+            self.by_ip.insert(ip, metadata);
+            return;
+        }
+
+        if self.by_ip.len() >= self.max_entries {
+            log::warn!(
+                "Pod cache at capacity ({}), skipping insert for {}/{}",
+                self.max_entries,
+                metadata.namespace,
+                metadata.pod_name
+            );
+            self.health.set_pod_cache_at_capacity(true);
+            self.health.inc_pod_cache_evictions();
+            return;
+        }
+
+        self.by_ip.insert(ip, metadata);
+    }
+
     pub fn get(&self, cgroup_id: u64) -> Option<PodMetadata> {
         self.by_cgroup.get(&cgroup_id).map(|r| r.clone())
     }
 
-    /// Look up pod metadata by IP address
     pub fn get_by_ip(&self, ip: u32) -> Option<PodMetadata> {
         self.by_ip.get(&ip).map(|r| r.clone())
     }
 
-    /// Remove a cgroup ID mapping
     pub fn remove(&self, cgroup_id: u64) -> Option<PodMetadata> {
         self.by_cgroup.remove(&cgroup_id).map(|(_, v)| v)
     }
 
-    /// Remove all entries matching a pod UID
     pub fn remove_pod(&self, pod_uid: &str) {
         self.by_cgroup.retain(|_, v| v.pod_uid != pod_uid);
         self.by_ip.retain(|_, v| v.pod_uid != pod_uid);
+
+        if self.by_ip.len() < self.max_entries {
+            self.health.set_pod_cache_at_capacity(false);
+        }
     }
 
-    /// Get the number of entries in the cache (by cgroup)
     pub fn len(&self) -> usize {
         self.by_cgroup.len()
     }
 
-    /// Get the number of IP-based entries
     pub fn ip_entries_count(&self) -> usize {
         self.by_ip.len()
     }
 
-    /// Check if the cache is empty
     pub fn is_empty(&self) -> bool {
         self.by_cgroup.is_empty()
     }
 
-    /// Get all entries (for debugging/metrics)
     pub fn entries(&self) -> Vec<(u64, PodMetadata)> {
         self.by_cgroup
             .iter()
@@ -95,7 +107,7 @@ impl PodCache {
 
 impl Default for PodCache {
     fn default() -> Self {
-        Self::new()
+        Self::new(10_000, HealthState::default())
     }
 }
 
@@ -103,9 +115,13 @@ impl Default for PodCache {
 mod tests {
     use super::*;
 
+    fn test_cache() -> PodCache {
+        PodCache::default()
+    }
+
     #[test]
     fn test_pod_cache_insert_get() {
-        let cache = PodCache::new();
+        let cache = test_cache();
 
         let metadata = PodMetadata {
             namespace: "default".to_string(),
@@ -113,7 +129,7 @@ mod tests {
             pod_uid: "abc-123".to_string(),
             container_name: "nginx".to_string(),
             container_id: "container123".to_string(),
-            pod_ip: Some(0x0A000005), // 10.0.0.5
+            pod_ip: Some(0x0A000005),
         };
 
         cache.insert(12345, metadata.clone());
@@ -125,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_pod_cache_get_by_ip() {
-        let cache = PodCache::new();
+        let cache = test_cache();
 
         let metadata = PodMetadata {
             namespace: "default".to_string(),
@@ -133,7 +149,7 @@ mod tests {
             pod_uid: "abc-123".to_string(),
             container_name: "nginx".to_string(),
             container_id: "container123".to_string(),
-            pod_ip: Some(0x0A000005), // 10.0.0.5
+            pod_ip: Some(0x0A000005),
         };
 
         cache.insert_by_ip(metadata);
@@ -147,7 +163,7 @@ mod tests {
 
     #[test]
     fn test_pod_cache_remove_pod() {
-        let cache = PodCache::new();
+        let cache = test_cache();
 
         let metadata1 = PodMetadata {
             namespace: "default".to_string(),
@@ -164,7 +180,7 @@ mod tests {
             pod_uid: "pod-1".to_string(),
             container_name: "sidecar".to_string(),
             container_id: "c2".to_string(),
-            pod_ip: Some(0x0A000001), // Same IP (same pod)
+            pod_ip: Some(0x0A000001),
         };
 
         let metadata3 = PodMetadata {
@@ -190,5 +206,69 @@ mod tests {
         assert!(cache.get(3).is_some());
         assert!(cache.get_by_ip(0x0A000001).is_none());
         assert!(cache.get_by_ip(0x0A000002).is_some());
+    }
+
+    #[test]
+    fn test_pod_cache_capacity() {
+        let health = HealthState::new();
+        let cache = PodCache::new(3, health.clone());
+
+        for i in 1..=3u32 {
+            let metadata = PodMetadata {
+                namespace: "default".to_string(),
+                pod_name: format!("pod-{}", i),
+                pod_uid: format!("uid-{}", i),
+                container_name: "main".to_string(),
+                container_id: format!("c-{}", i),
+                pod_ip: Some(i),
+            };
+            cache.insert_by_ip(metadata);
+        }
+        assert_eq!(cache.ip_entries_count(), 3);
+
+        let overflow = PodMetadata {
+            namespace: "default".to_string(),
+            pod_name: "pod-4".to_string(),
+            pod_uid: "uid-4".to_string(),
+            container_name: "main".to_string(),
+            container_id: "c-4".to_string(),
+            pod_ip: Some(4),
+        };
+        cache.insert_by_ip(overflow);
+
+        assert_eq!(cache.ip_entries_count(), 3);
+        assert!(cache.get_by_ip(4).is_none());
+        assert_eq!(health.pod_cache_evictions(), 1);
+    }
+
+    #[test]
+    fn test_pod_cache_allows_update_at_capacity() {
+        let health = HealthState::new();
+        let cache = PodCache::new(2, health);
+
+        for i in 1..=2u32 {
+            let metadata = PodMetadata {
+                namespace: "default".to_string(),
+                pod_name: format!("pod-{}", i),
+                pod_uid: format!("uid-{}", i),
+                container_name: "main".to_string(),
+                container_id: format!("c-{}", i),
+                pod_ip: Some(i),
+            };
+            cache.insert_by_ip(metadata);
+        }
+
+        let update = PodMetadata {
+            namespace: "updated".to_string(),
+            pod_name: "pod-1-updated".to_string(),
+            pod_uid: "uid-1".to_string(),
+            container_name: "main".to_string(),
+            container_id: "c-1".to_string(),
+            pod_ip: Some(1),
+        };
+        cache.insert_by_ip(update);
+
+        let retrieved = cache.get_by_ip(1).expect("Should find updated entry");
+        assert_eq!(retrieved.namespace, "updated");
     }
 }

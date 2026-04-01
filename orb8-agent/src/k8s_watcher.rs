@@ -1,10 +1,5 @@
-//! Kubernetes pod watcher for tracking pod lifecycle events
-//!
-//! Watches all pods in the cluster and maintains IP-based and cgroup-based pod metadata mappings.
-//! IP-based mapping is the primary enrichment path for TC classifier events.
-//! Cgroup-based mapping is populated for future use by syscall tracepoint probes (Phase 8).
-
 use crate::cgroup::CgroupResolver;
+use crate::health::HealthState;
 use crate::net::parse_ipv4;
 use crate::pod_cache::{PodCache, PodMetadata};
 use anyhow::{Context, Result};
@@ -16,18 +11,27 @@ use kube::{
     Client,
 };
 use log::{debug, error, info, warn};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
+use tokio_util::sync::CancellationToken;
 
-/// Kubernetes pod watcher that updates the pod cache
 pub struct PodWatcher {
     client: Client,
     cache: PodCache,
     cgroup_resolver: CgroupResolver,
+    cancel: CancellationToken,
+    health: HealthState,
+    backoff_min: Duration,
+    backoff_max: Duration,
 }
 
 impl PodWatcher {
-    /// Create a new PodWatcher
-    pub async fn new(cache: PodCache) -> Result<Self> {
+    pub async fn new(
+        cache: PodCache,
+        cancel: CancellationToken,
+        health: HealthState,
+        backoff_min: Duration,
+        backoff_max: Duration,
+    ) -> Result<Self> {
         let client = Client::try_default()
             .await
             .context("Failed to create Kubernetes client")?;
@@ -36,40 +40,64 @@ impl PodWatcher {
             client,
             cache,
             cgroup_resolver: CgroupResolver::new(),
+            cancel,
+            health,
+            backoff_min,
+            backoff_max,
         })
     }
 
-    /// Start watching pods and updating the cache
-    /// This runs indefinitely and should be spawned as a task
     pub async fn run(&self) -> Result<()> {
         info!("Starting Kubernetes pod watcher...");
 
         let pods: Api<Pod> = Api::all(self.client.clone());
 
-        let mut backoff = Duration::from_secs(1);
-        let max_backoff = Duration::from_secs(30);
+        let mut backoff = self.backoff_min;
 
         loop {
-            match self.watch_pods(&pods).await {
-                Ok(_) => {
-                    warn!("Pod watch stream ended, reconnecting...");
-                    backoff = Duration::from_secs(1);
+            tokio::select! {
+                _ = self.cancel.cancelled() => {
+                    info!("Pod watcher shutting down");
+                    return Ok(());
                 }
-                Err(e) => {
-                    error!("Pod watch failed: {}, reconnecting in {:?}", e, backoff);
-                    tokio::time::sleep(backoff).await;
-                    backoff = std::cmp::min(backoff * 2, max_backoff);
+                result = self.watch_pods(&pods) => {
+                    match result {
+                        Ok(_) => {
+                            warn!("Pod watch stream ended, reconnecting...");
+                            backoff = self.backoff_min;
+                        }
+                        Err(e) => {
+                            self.health.set_k8s_watcher_connected(false);
+                            error!("Pod watch failed: {}, reconnecting in {:?}", e, backoff);
+
+                            let jitter_ms = jitter_millis(backoff);
+                            let sleep_duration = backoff + Duration::from_millis(jitter_ms);
+
+                            tokio::select! {
+                                _ = self.cancel.cancelled() => {
+                                    info!("Pod watcher shutting down");
+                                    return Ok(());
+                                }
+                                _ = tokio::time::sleep(sleep_duration) => {}
+                            }
+
+                            backoff = std::cmp::min(backoff * 2, self.backoff_max);
+                        }
+                    }
                 }
             }
 
-            // Resync all pods after reconnection
+            if self.cancel.is_cancelled() {
+                info!("Pod watcher shutting down");
+                return Ok(());
+            }
+
             if let Err(e) = self.resync_all(&pods).await {
                 error!("Failed to resync pods: {}", e);
             }
         }
     }
 
-    /// Watch pod events and update the cache
     async fn watch_pods(&self, pods: &Api<Pod>) -> Result<()> {
         let config = watcher::Config::default();
         let mut stream = watcher::watcher(pods.clone(), config).boxed();
@@ -86,6 +114,7 @@ impl PodWatcher {
                     debug!("Pod watcher initialized");
                 }
                 Event::InitDone => {
+                    self.health.set_k8s_watcher_connected(true);
                     info!(
                         "Pod watcher initial sync complete. Tracking {} pods (by IP)",
                         self.cache.ip_entries_count()
@@ -97,7 +126,6 @@ impl PodWatcher {
         Ok(())
     }
 
-    /// Resync all pods (used after reconnection)
     async fn resync_all(&self, pods: &Api<Pod>) -> Result<()> {
         info!("Resyncing all pods...");
 
@@ -107,6 +135,7 @@ impl PodWatcher {
             self.handle_pod_apply(&pod);
         }
 
+        self.health.set_k8s_watcher_connected(true);
         info!(
             "Resync complete. Tracking {} pods (by IP)",
             self.cache.ip_entries_count()
@@ -115,7 +144,6 @@ impl PodWatcher {
         Ok(())
     }
 
-    /// Handle a pod being created or updated
     fn handle_pod_apply(&self, pod: &Pod) {
         let namespace = pod.metadata.namespace.as_deref().unwrap_or("default");
         let name = pod.metadata.name.as_deref().unwrap_or("unknown");
@@ -125,13 +153,11 @@ impl PodWatcher {
             return;
         }
 
-        // Get container statuses
         let status = match &pod.status {
             Some(s) => s,
             None => return,
         };
 
-        // Extract pod IP for IP-based enrichment
         let pod_ip = status.pod_ip.as_ref().and_then(|ip| parse_ipv4(ip));
 
         if let Some(ip) = pod_ip {
@@ -146,7 +172,6 @@ impl PodWatcher {
 
         let container_statuses = status.container_statuses.as_deref().unwrap_or(&[]);
 
-        // If we have a pod IP, insert it for IP-based lookup (even without container info)
         if pod_ip.is_some() {
             let metadata = PodMetadata {
                 namespace: namespace.to_string(),
@@ -165,7 +190,6 @@ impl PodWatcher {
                 None => continue,
             };
 
-            // Resolve cgroup ID for this container
             match self.cgroup_resolver.resolve(pod_uid, container_id) {
                 Ok(cgroup_id) => {
                     let metadata = PodMetadata {
@@ -194,7 +218,6 @@ impl PodWatcher {
         }
     }
 
-    /// Handle a pod being deleted
     fn handle_pod_delete(&self, pod: &Pod) {
         let namespace = pod.metadata.namespace.as_deref().unwrap_or("default");
         let name = pod.metadata.name.as_deref().unwrap_or("unknown");
@@ -204,5 +227,18 @@ impl PodWatcher {
             self.cache.remove_pod(pod_uid);
             debug!("Removed pod {}/{} from cache", namespace, name);
         }
+    }
+}
+
+fn jitter_millis(backoff: Duration) -> u64 {
+    let nanos = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    let max_jitter = (backoff.as_millis() / 4) as u64;
+    if max_jitter == 0 {
+        0
+    } else {
+        (nanos as u64) % max_jitter
     }
 }
