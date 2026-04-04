@@ -13,7 +13,10 @@ async fn main() -> Result<()> {
     use aya_log::EbpfLogger;
     use log::{debug, error, info, warn};
     use orb8_agent::aggregator::FlowAggregator;
+    use orb8_agent::config::AgentConfig;
     use orb8_agent::grpc_server;
+    use orb8_agent::health::HealthState;
+    use orb8_agent::health_server;
     use orb8_agent::k8s_watcher::PodWatcher;
     use orb8_agent::net::{
         format_direction, format_ipv4, format_protocol, is_self_traffic, resolve_local_ips,
@@ -24,25 +27,43 @@ async fn main() -> Result<()> {
     use std::net::SocketAddr;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
-    use std::time::Duration;
     use tokio::signal;
+    use tokio::signal::unix::{signal as unix_signal, SignalKind};
+    use tokio::task::JoinHandle;
+    use tokio_util::sync::CancellationToken;
 
-    const GRPC_PORT: u16 = 9090;
+    let config = AgentConfig::from_env();
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     info!("orb8-agent starting...");
+    config.log_config();
 
-    let pod_cache = PodCache::new();
+    let health = HealthState::new();
+    let cancel = CancellationToken::new();
+    let mut handles: Vec<JoinHandle<()>> = Vec::new();
 
-    let k8s_enabled = match PodWatcher::new(pod_cache.clone()).await {
+    let pod_cache = PodCache::new(config.max_pod_cache_entries, health.clone());
+
+    let k8s_enabled = match PodWatcher::new(
+        pod_cache.clone(),
+        cancel.child_token(),
+        health.clone(),
+        std::time::Duration::from_secs(1),
+        std::time::Duration::from_secs(30),
+    )
+    .await
+    {
         Ok(watcher) => {
             info!("Kubernetes API available - starting pod watcher");
-            tokio::spawn(async move {
+            let watcher_health = health.clone();
+            let handle = tokio::spawn(async move {
                 if let Err(e) = watcher.run().await {
                     error!("Pod watcher terminated with error: {}", e);
+                    watcher_health.set_k8s_watcher_connected(false);
                 }
             });
+            handles.push(handle);
             true
         }
         Err(e) => {
@@ -54,18 +75,31 @@ async fn main() -> Result<()> {
         }
     };
 
-    let aggregator = FlowAggregator::new();
+    let aggregator = FlowAggregator::new(config.max_flows, config.flow_timeout, health.clone());
 
     let events_dropped = Arc::new(AtomicU64::new(0));
 
-    let grpc_addr: SocketAddr = format!("0.0.0.0:{}", GRPC_PORT).parse()?;
-    let event_tx = grpc_server::start_server(
+    let grpc_addr: SocketAddr = format!("0.0.0.0:{}", config.grpc_port).parse()?;
+    let (event_tx, grpc_handle) = grpc_server::start_server(
         aggregator.clone(),
         pod_cache.clone(),
         grpc_addr,
         events_dropped.clone(),
+        cancel.child_token(),
+        health.clone(),
+        config.broadcast_channel_size,
+        config.max_query_limit,
     )
     .await?;
+    handles.push(grpc_handle);
+
+    // Health HTTP server
+    let health_handle = tokio::spawn(health_server::run(
+        health.clone(),
+        config.health_port,
+        cancel.child_token(),
+    ));
+    handles.push(health_handle);
 
     let mut manager = ProbeManager::new()?;
 
@@ -78,6 +112,7 @@ async fn main() -> Result<()> {
 
     let interfaces = ProbeManager::discover_interfaces();
     manager.attach_to_interfaces(&interfaces)?;
+    health.set_probes_attached(true);
 
     let local_ips = resolve_local_ips();
     if local_ips.is_empty() {
@@ -85,7 +120,7 @@ async fn main() -> Result<()> {
     } else {
         info!(
             "Self-traffic filter: port {} on {} local IPs",
-            GRPC_PORT,
+            config.grpc_port,
             local_ips.len()
         );
     }
@@ -95,40 +130,60 @@ async fn main() -> Result<()> {
 
     info!("orb8-agent running. Press Ctrl+C to exit.");
     info!(
-        "gRPC server listening on {}. K8s enrichment: {}",
-        grpc_addr,
+        "gRPC server on :{}. Health server on :{}. K8s enrichment: {}",
+        config.grpc_port,
+        config.health_port,
         if k8s_enabled { "enabled" } else { "disabled" }
     );
 
     let expiration_aggregator = aggregator.clone();
-    tokio::spawn(async move {
+    let expiration_cancel = cancel.child_token();
+    let expiration_interval = config.expiration_interval;
+    let expiration_handle = tokio::spawn(async move {
         loop {
-            tokio::time::sleep(Duration::from_secs(10)).await;
-            let expired = expiration_aggregator.expire_old_flows();
-            if expired > 0 {
-                debug!("Expired {} old flows", expired);
+            tokio::select! {
+                _ = expiration_cancel.cancelled() => break,
+                _ = tokio::time::sleep(expiration_interval) => {
+                    let expired = expiration_aggregator.expire_old_flows();
+                    if expired > 0 {
+                        debug!("Expired {} old flows", expired);
+                    }
+                }
             }
         }
     });
+    handles.push(expiration_handle);
+
+    let grpc_port = config.grpc_port;
+    let max_batch_size = config.max_batch_size;
+    let poll_interval = config.poll_interval;
+
+    let mut sigterm =
+        unix_signal(SignalKind::terminate()).expect("Failed to register SIGTERM handler");
 
     loop {
         tokio::select! {
             _ = signal::ctrl_c() => {
-                info!("Shutdown signal received");
+                info!("Received SIGINT, shutting down...");
+                cancel.cancel();
                 break;
             }
-            _ = tokio::time::sleep(Duration::from_millis(100)) => {
+            _ = sigterm.recv() => {
+                info!("Received SIGTERM, shutting down...");
+                cancel.cancel();
+                break;
+            }
+            _ = tokio::time::sleep(poll_interval) => {
                 if let Some(ref map) = drop_counter_map {
                     events_dropped.store(read_events_dropped(map), Ordering::Relaxed);
                 }
 
-                let events = poll_events(&mut ring_buf);
+                let events = poll_events(&mut ring_buf, max_batch_size);
                 for event in events {
-                    if is_self_traffic(&event, GRPC_PORT, &local_ips) {
+                    if is_self_traffic(&event, grpc_port, &local_ips) {
                         continue;
                     }
 
-                    // IP-based pod enrichment (single path for both aggregator and streams)
                     let src_pod = pod_cache.get_by_ip(event.src_ip);
                     let dst_pod = pod_cache.get_by_ip(event.dst_ip);
 
@@ -158,7 +213,10 @@ async fn main() -> Result<()> {
                         bytes: event.packet_len as u32,
                         timestamp_ns: event.timestamp_ns as i64,
                     };
-                    let _ = event_tx.send(network_event);
+
+                    if event_tx.send(network_event).is_err() {
+                        health.inc_broadcast_drops();
+                    }
 
                     debug!(
                         "[{}/{}] {}:{} -> {}:{} {} {} len={}",
@@ -172,6 +230,22 @@ async fn main() -> Result<()> {
                 }
             }
         }
+    }
+
+    // Graceful shutdown: wait for tasks with timeout
+    let shutdown_deadline = config.shutdown_timeout;
+    match tokio::time::timeout(shutdown_deadline, async {
+        for handle in handles {
+            let _ = handle.await;
+        }
+    })
+    .await
+    {
+        Ok(_) => info!("All tasks shut down cleanly"),
+        Err(_) => warn!(
+            "Shutdown timed out after {:?}, force-exiting",
+            shutdown_deadline
+        ),
     }
 
     manager.unload();

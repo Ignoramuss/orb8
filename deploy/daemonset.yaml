@@ -45,6 +45,7 @@ spec:
       serviceAccountName: orb8-agent
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
+      terminationGracePeriodSeconds: 15
       containers:
         - name: orb8-agent
           image: orb8-agent:test
@@ -60,8 +61,36 @@ spec:
             - containerPort: 9090
               name: grpc
               protocol: TCP
+            - containerPort: 9091
+              name: health
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9091
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 9091
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           securityContext:
             privileged: false
+            seccompProfile:
+              type: RuntimeDefault
             capabilities:
               add:
                 - BPF
@@ -73,8 +102,11 @@ spec:
             - name: sys
               mountPath: /sys
               readOnly: true
+            - name: bpffs
+              mountPath: /sys/fs/bpf
             - name: debugfs
               mountPath: /sys/kernel/debug
+              readOnly: true
             - name: cgroup
               mountPath: /sys/fs/cgroup
               readOnly: true
@@ -84,6 +116,9 @@ spec:
         - name: sys
           hostPath:
             path: /sys
+        - name: bpffs
+          hostPath:
+            path: /sys/fs/bpf
         - name: debugfs
           hostPath:
             path: /sys/kernel/debug

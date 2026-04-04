@@ -191,13 +191,15 @@ pub fn read_events_dropped(map: &Array<aya::maps::MapData, u64>) -> u64 {
 }
 
 /// Poll events from the ring buffer
-pub fn poll_events(ring_buf: &mut RingBuf<&mut aya::maps::MapData>) -> Vec<NetworkFlowEvent> {
-    const MAX_BATCH_SIZE: usize = 1024;
+pub fn poll_events(
+    ring_buf: &mut RingBuf<&mut aya::maps::MapData>,
+    max_batch_size: usize,
+) -> Vec<NetworkFlowEvent> {
     let mut events = Vec::new();
 
     while let Some(item) = ring_buf.next() {
-        if events.len() >= MAX_BATCH_SIZE {
-            warn!("Hit maximum batch size ({}), stopping poll", MAX_BATCH_SIZE);
+        if events.len() >= max_batch_size {
+            warn!("Hit maximum batch size ({}), stopping poll", max_batch_size);
             break;
         }
 

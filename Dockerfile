@@ -1,6 +1,9 @@
 # Full multi-stage build (used in CI or when no local build is available)
 FROM rust:1.94-bookworm AS builder
 
+RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN rustup toolchain install nightly \
     && rustup component add rust-src --toolchain nightly
 
