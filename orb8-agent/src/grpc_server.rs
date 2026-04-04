@@ -143,39 +143,41 @@ impl OrbitAgentService for AgentService {
     }
 }
 
-pub async fn start_server(
-    aggregator: FlowAggregator,
-    pod_cache: PodCache,
-    addr: std::net::SocketAddr,
-    events_dropped: Arc<AtomicU64>,
-    cancel: CancellationToken,
-    health: HealthState,
-    broadcast_channel_size: usize,
-    max_query_limit: usize,
-) -> Result<(broadcast::Sender<NetworkEvent>, JoinHandle<()>)> {
+pub struct ServerConfig {
+    pub aggregator: FlowAggregator,
+    pub pod_cache: PodCache,
+    pub addr: std::net::SocketAddr,
+    pub events_dropped: Arc<AtomicU64>,
+    pub cancel: CancellationToken,
+    pub health: HealthState,
+    pub broadcast_channel_size: usize,
+    pub max_query_limit: usize,
+}
+
+pub async fn start_server(config: ServerConfig) -> Result<(broadcast::Sender<NetworkEvent>, JoinHandle<()>)> {
     let node_name = std::env::var("NODE_NAME")
         .or_else(|_| hostname::get().map(|h| h.to_string_lossy().to_string()))
         .unwrap_or_else(|_| "unknown".to_string());
 
     let service = AgentService::new(
-        aggregator,
-        pod_cache,
+        config.aggregator,
+        config.pod_cache,
         node_name,
-        events_dropped,
-        health,
-        broadcast_channel_size,
-        max_query_limit,
+        config.events_dropped,
+        config.health,
+        config.broadcast_channel_size,
+        config.max_query_limit,
     );
     let event_tx = service.event_sender();
 
-    info!("Starting gRPC server on {}", addr);
+    info!("Starting gRPC server on {}", config.addr);
 
     let grpc_service = OrbitAgentServiceServer::new(service);
 
     let handle = tokio::spawn(async move {
         let server = tonic::transport::Server::builder()
             .add_service(grpc_service)
-            .serve_with_shutdown(addr, cancel.cancelled());
+            .serve_with_shutdown(config.addr, config.cancel.cancelled());
         if let Err(e) = server.await {
             log::error!("gRPC server error: {}", e);
         }

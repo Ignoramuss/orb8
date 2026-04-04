@@ -80,16 +80,16 @@ async fn main() -> Result<()> {
     let events_dropped = Arc::new(AtomicU64::new(0));
 
     let grpc_addr: SocketAddr = format!("0.0.0.0:{}", config.grpc_port).parse()?;
-    let (event_tx, grpc_handle) = grpc_server::start_server(
-        aggregator.clone(),
-        pod_cache.clone(),
-        grpc_addr,
-        events_dropped.clone(),
-        cancel.child_token(),
-        health.clone(),
-        config.broadcast_channel_size,
-        config.max_query_limit,
-    )
+    let (event_tx, grpc_handle) = grpc_server::start_server(grpc_server::ServerConfig {
+        aggregator: aggregator.clone(),
+        pod_cache: pod_cache.clone(),
+        addr: grpc_addr,
+        events_dropped: events_dropped.clone(),
+        cancel: cancel.child_token(),
+        health: health.clone(),
+        broadcast_channel_size: config.broadcast_channel_size,
+        max_query_limit: config.max_query_limit,
+    })
     .await?;
     handles.push(grpc_handle);
 
