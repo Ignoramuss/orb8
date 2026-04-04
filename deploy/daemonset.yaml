@@ -48,8 +48,8 @@ spec:
       terminationGracePeriodSeconds: 15
       containers:
         - name: orb8-agent
-          image: orb8-agent:test
-          imagePullPolicy: Never
+          image: ghcr.io/ignoramuss/orb8-agent:latest
+          imagePullPolicy: IfNotPresent
           env:
             - name: RUST_LOG
               value: info
