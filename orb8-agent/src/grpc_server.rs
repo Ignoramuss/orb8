@@ -154,7 +154,9 @@ pub struct ServerConfig {
     pub max_query_limit: usize,
 }
 
-pub async fn start_server(config: ServerConfig) -> Result<(broadcast::Sender<NetworkEvent>, JoinHandle<()>)> {
+pub async fn start_server(
+    config: ServerConfig,
+) -> Result<(broadcast::Sender<NetworkEvent>, JoinHandle<()>)> {
     let node_name = std::env::var("NODE_NAME")
         .or_else(|_| hostname::get().map(|h| h.to_string_lossy().to_string()))
         .unwrap_or_else(|_| "unknown".to_string());
